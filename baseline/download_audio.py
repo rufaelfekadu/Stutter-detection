@@ -19,9 +19,9 @@ import numpy as np
 import argparse
 
 parser = argparse.ArgumentParser(description='Download raw audio files for SEP-28k or FluencyBank and convert to 16k hz mono wavs.')
-parser.add_argument('--episodes', type=str, default="dataset/SEP-28k_episodes.csv",
+parser.add_argument('--episodes', type=str, default="../datasets/SEP-28k_episodes.csv",
                    help='Path to the labels csv files (e.g., SEP-28k_episodes.csv)')
-parser.add_argument('--wavs', type=str, default="dataset/wavs",
+parser.add_argument('--wavs', type=str, default="../datasets/wavs",
                    help='Path where audio files from download_audio.py are saved')
 
 
