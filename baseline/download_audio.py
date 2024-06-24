@@ -19,9 +19,9 @@ import numpy as np
 import argparse
 
 parser = argparse.ArgumentParser(description='Download raw audio files for SEP-28k or FluencyBank and convert to 16k hz mono wavs.')
-parser.add_argument('--episodes', type=str, default="../datasets/SEP-28k_episodes.csv",
+parser.add_argument('--episodes', type=str, default="../datasets/sep28k/SEP-28k_episodes.csv",
                    help='Path to the labels csv files (e.g., SEP-28k_episodes.csv)')
-parser.add_argument('--wavs', type=str, default="../datasets/wavs",
+parser.add_argument('--wavs', type=str, default="../datasets/sep28k/wavs",
                    help='Path where audio files from download_audio.py are saved')
 
 
@@ -66,16 +66,9 @@ for i in range(n_items):
 	# Download raw audio file. This could be parallelized.
 	if not os.path.exists(audio_path_orig):
 		line = f"wget -O {audio_path_orig} {episode_url}"
-		process = subprocess.Popen([(line)],shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-		stdout, stderr = process.communicate()
+		process = subprocess.Popen([(line)],shell=True)
 		process.wait()
-		if process.returncode != 0:
-			try:
-				os.remove(audio_path_orig)
-			except:
-				pass
-			failed.append(episode_url)
-			continue
+		
 		
 
 	# Convert to 16khz mono wav file

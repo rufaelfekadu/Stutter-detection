@@ -3,32 +3,9 @@ import os
 import json
 from tqdm import tqdm
 import pandas as pd
-# Initialize the 404 counter
-not_found_count = 0
+import argparse
 
-from fuzzywuzzy import fuzz, process
 import re
-
-def extract_numbers(text):
-    return re.findall(r'\d+', text)
-
-def custom_scorer(episode, candidate):
-    # Standard fuzzy matching score
-    standard_score = fuzz.token_sort_ratio(episode, candidate)
-
-    # Extract numbers from both strings
-    episode_numbers = extract_numbers(episode)
-    candidate_numbers = extract_numbers(candidate)
-
-    # Numerical matching score
-    num_score = 0
-    if episode_numbers and candidate_numbers:
-        common_numbers = set(episode_numbers) & set(candidate_numbers)
-        num_score = len(common_numbers) / max(len(episode_numbers), len(candidate_numbers)) * 100
-
-    # Combine scores with more weight on numerical match
-    combined_score = 0.7 * standard_score + 0.3 * num_score
-    return combined_score
 
 def get_video_urls(channel_url, ):
     command = f"yt-dlp --flat-playlist -j {channel_url}"
@@ -37,13 +14,18 @@ def get_video_urls(channel_url, ):
 
     if process.returncode != 0:
         print(f"Error fetching video URLs: {stderr.decode()}")
-        return []
+        return {}
 
     videos = {}
     for line in stdout.splitlines():
         video_info = json.loads(line)
-        videos[video_info['title']] = f"https://www.youtube.com/watch?v={video_info['id']}"
+        # remove everything after the first hyphen
+        title = video_info['title'].split('-')[0].replace('Episode', 'ep')
+        title = extract_episode_info(title.lower())
+        videos[title] = f"https://www.youtube.com/watch?v={video_info['id']}"
+  
     return videos
+
 
 def get_episodes(episods_path):
     # read the csv file
@@ -54,59 +36,67 @@ def get_episodes(episods_path):
     df = df[df['abbv']==' StrongVoices']
 
     # get the episode from the url
-    df['episode_name'] = df['url'].apply(lambda x:' '.join(x.split('/')[-1].split('-')[3:]))
+    df['episode_name'] = df['url'].apply(lambda x:' '.join(x.split('/')[-1].split('-')[3:]).replace('svpodcast','').replace('episode', 'ep'))
+    df['episode_name'] = df['episode_name'].apply(lambda x:extract_episode_info(x.lower()))
 
     return df['episode_name'].tolist(), df['epid'].tolist()
 
-def find_best_matches(episode_list, scraped_episodes, threshold=80):
-    matches = {}
-    missed = []
-    for episode, epid in zip(*episode_list):
-        best_match, score = process.extractOne(episode, scraped_episodes.keys(), scorer=fuzz.token_sort_ratio)
-        if score >= threshold:
-            matches[epid] = scraped_episodes[best_match]
-        else:
-            missed.append((episode, epid))
-            matches[epid] = None
-    return matches, missed
-
-
 def download_audio(audio_path, video_url):
-    global not_found_count
+    if os.path.exists(f"{audio_path}.mp3"):
+        return f"{audio_path}.mp3"
     command = f"yt-dlp -x --audio-format mp3 -o '{audio_path}.%(ext)s' {video_url}"
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = process.communicate()
+    process = subprocess.Popen(command, shell=True)
+    process.wait()
+    return f"{audio_path}.mp3"
 
-    if process.returncode != 0:
-        if b'ERROR: [Errno 404]' in stderr:
-            not_found_count += 1
-            print(f"404 Not Found for URL: {video_url}")
-        else:
-            print(f"Error downloading {video_url}: {stderr.decode()}")
-        return False
-    return True
+def extract_episode_info(text):
+    pattern = r'(bonus )?ep ?(\d+)'
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        is_bonus = match.group(1)
+        episode = match.group(2)
+        return f"{is_bonus.strip() if is_bonus else ''} ep {episode}".strip()
+    return None
 
 if __name__ == "__main__":
     # Example usage
     channel_url = "https://www.youtube.com/@strongvoices-overcomingspe152/videos"
-    audio_path = "dataset/wavs/StrongVoices/"
-    csv_path = "dataset/SEP-28k_episodes.csv"
+    csv_path = "datasets/sep28k/SEP-28k_episodes.csv"
 
-    episode_list, epid_list = get_episodes(csv_path)
+    parser = argparse.ArgumentParser(description='Download audio from youtube')
+    parser.add_argument('--channel_url', type=str, default=channel_url,
+                        help='URL of the youtube channel')
+    parser.add_argument('--audio_path', type=str, default="datasets/sep28k/wavs/StrongVoices/",
+                        help='Path to save the audio files')
+    parser.add_argument('--episodes', type=str, default=csv_path,
+                        help='Path to the csv file containing the episodes')
+    
+    args = parser.parse_args()
 
-    video_urls = get_video_urls(channel_url)
+    episode_list, epid_list = get_episodes(args.episodes)
+
+    video_urls = get_video_urls(args.channel_url)
     print(f"Found {len(video_urls)} videos.")
 
-    #  find the best match for each episode
-    best_matchces, missed = find_best_matches((episode_list, epid_list), video_urls)
-
-    print(f"Missed {len(missed)} episodes.")
-
+    audio_path = args.audio_path
     if not os.path.exists(audio_path):
         os.makedirs(audio_path)
 
-    for id, video_url in best_matchces.items():
-        file_path = os.path.join(audio_path, f"{id}")
-        download_audio(file_path, video_url)
+    for id, episode in zip(epid_list, episode_list):
+        
+        if not(episode in video_urls.keys()):
+            print(f"Skipping {episode}")
+            continue
 
-    print(f"Total 404 errors: {not_found_count}")
+        file_path = os.path.join(audio_path, f"{id}")
+        wav_path = f"{file_path}.wav"
+        video_url = video_urls[episode]
+        file_path = download_audio(file_path, video_url)
+
+        # Convert to 16khz mono wav file
+        line = f"ffmpeg -i {file_path} -ac 1 -ar 16000 {wav_path}"
+        process = subprocess.Popen([(line)],shell=True)
+        process.wait()
+
+        # Remove the original mp3/m4a file
+        os.remove(file_path)
