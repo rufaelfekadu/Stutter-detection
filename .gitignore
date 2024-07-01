@@ -11,7 +11,7 @@ __pycache__/
 datasets/
 
 # Logs
-logs/
+*logs/
 
 # Virtual environment
 venv/
@@ -26,3 +26,6 @@ venv/
 
 # Windows
 Thumbs.db
+
+# tools
+tools/

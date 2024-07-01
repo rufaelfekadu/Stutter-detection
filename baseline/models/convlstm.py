@@ -15,13 +15,32 @@ class ConvolutionalBlock(nn.Module):
         x = self.maxpool(x)
         return x
 
+class resnet_block(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(resnet_block, self).__init__()
+
+        for i, in_channel, out_channel in enumerate(zip(in_channels, out_channels)):
+            setattr(self, f'conv1_{i}', nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=1, padding=1))
+            setattr(self, f'batchnorm_{i}', nn.BatchNorm2d(out_channel))
+
+        self.batchnorm = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU()
+                               
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.relu(x)
+        x = self.conv2(x)
+        x = x + x
+        return x
+    
 class ConvLSTM(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, num_classes):
         super(ConvLSTM, self).__init__()
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         
-        self.conv_block = ConvolutionalBlock(3, 64)  # Example: input has 3 channels
+        self.input_conv = nn.Conv2d(1, 64, kernel_size=5, stride=1, padding=1)
+        self.batch_norm = nn.BatchNorm2d(num_features=64)
         
         self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
         self.fc_1 = nn.Linear(hidden_size, num_classes)
@@ -29,7 +48,7 @@ class ConvLSTM(nn.Module):
         
     def forward(self, x):
         # Apply convolutional block
-        x = self.conv_block(x)
+        x = self.input_conv(x)
         
         # Reshape input for LSTM
         batch_size, _, _, _ = x.size()
