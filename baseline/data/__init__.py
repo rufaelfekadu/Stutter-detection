@@ -4,11 +4,16 @@ from sklearn.model_selection import train_test_split
 import torch
 
 def get_dataloaders(cfg):
-    transform = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
-    dataset = Sep28K(cfg.data_path, cfg.label_path, transform=transform)
+    
+    transforms = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
+    dataset = Sep28K(cfg.data_path, cfg.label_path, transforms=transforms)
 
-    train_dataset, val_dataset = train_test_split(dataset, test_size=0.2, random_state=cfg.seed)
-    val_dataset, test_dataset = train_test_split(val_dataset, test_size=0.5, random_state=cfg.seed)
+    train_idx, val_idx = train_test_split(dataset.data.index, test_size=0.2, random_state=cfg.seed)
+    val_idx, test_idx = train_test_split(val_idx, test_size=0.5, random_state=cfg.seed)
+
+    train_dataset = torch.utils.data.Subset(dataset, train_idx)
+    val_dataset = torch.utils.data.Subset(dataset, val_idx)
+    test_dataset = torch.utils.data.Subset(dataset, test_idx)
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,

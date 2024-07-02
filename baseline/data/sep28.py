@@ -4,14 +4,14 @@ import torchaudio
 import torchaudio.transforms as transforms
 import pandas as pd
 import os
+from sklearn.model_selection import train_test_split
 
 class Sep28K(Dataset):
-    def __init__(self, root, label_path, transforms=None):
+    def __init__(self, root, label_path, transforms=None, split='train', random_state=42):
         self.transform = transforms
         self.root = root
         self.labels_csv = label_path
         self.data = self._load_data()
-
 
     def _load_data(self):
         data_path = self.root
@@ -22,7 +22,8 @@ class Sep28K(Dataset):
         df['label_per_type'] = df[label_columns].apply(lambda row: -1 if row.max() <= 1 else label_columns.index(row.idxmax()), axis=1)
         df['label_ccc'] = df[label_columns].values.tolist()
         return df[['file_path', 'label_fluent', 'label_per_type', 'label_ccc']]
-
+    
+    
     def __len__(self):
         return len(self.data)
 

@@ -21,7 +21,12 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
     def write(self, epoch=0):
-        self._writer.add_scalar(self._name, self.avg, epoch)
+        try:
+            self._writer.add_scalar(self._name, self.avg, epoch)
+        except Exception as e:
+            print(e)
+
+
 
 class CCCLoss(nn.Module):
     def __init__(self):
