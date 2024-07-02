@@ -9,7 +9,7 @@ from logger import TensorboardLogger
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model')
-    parser.add_argument('--config', type=str, default='configs/config.yaml')
+    parser.add_argument('--config', type=str, default='config.yml')
     parser.add_argument('--opts', nargs='*', default=[])
     args = parser.parse_args()
     return args
@@ -26,7 +26,7 @@ def main(cfg):
 
 if __name__ == "__main__":
     args = parse_args()
-    # cfg.merge_from_file(args.config)
+    cfg.merge_from_file(args.config)
     cfg.merge_from_list(args.opts)
     cfg.freeze()
     
