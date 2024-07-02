@@ -12,6 +12,7 @@ datasets
 
 # Logs
 *logs/
+outputs/
 
 # Virtual environment
 venv/

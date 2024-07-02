@@ -2,13 +2,15 @@ from .sep28 import Sep28K
 from torchaudio.transforms import MelSpectrogram
 from sklearn.model_selection import train_test_split
 import torch
+import numpy as np
 
 def get_dataloaders(cfg):
     
     transforms = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
-    dataset = Sep28K(cfg.data_path, cfg.label_path, transforms=transforms)
+    dataset = Sep28K(cfg.data_path, cfg.label_path, ckpt_path=cfg.data_ckpt, transforms=transforms)
 
-    train_idx, val_idx = train_test_split(dataset.data.index, test_size=0.2, random_state=cfg.seed)
+
+    train_idx, val_idx = train_test_split(np.arange(0, len(dataset)), test_size=0.2, random_state=cfg.seed) 
     val_idx, test_idx = train_test_split(val_idx, test_size=0.5, random_state=cfg.seed)
 
     train_dataset = torch.utils.data.Subset(dataset, train_idx)

@@ -67,7 +67,7 @@ class Trainer(BaseTrainer):
                 x, y_t1, y_t2, y = x.to(device), y_t1.to(device), y_t2.to(device), y.to(device)
 
                 self.optimizer.zero_grad()
-                pred_t1, pred_t2 = self.model(x.squeeze(1), task_type=task_type)
+                pred_t1, pred_t2 = self.model(x, task_type=task_type)
                 loss1, loss2 = 0, 0
 
                 if task_type == 'mtl':
@@ -107,7 +107,7 @@ class Trainer(BaseTrainer):
             for batch in self.val_loader:
                 X, y_t1, y_t2, _ = batch
                 X, y_t1, y_t2 = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device)
-                pred_t1, pred_t2 = self.model(X.squeeze(1), task_type=task_type)
+                pred_t1, pred_t2 = self.model(X, task_type=task_type)
                 
                 if task_type == 'mtl' or task_type == 't1':
                     loss1 = loss_t1(pred_t1, y_t1)
@@ -128,7 +128,7 @@ class Trainer(BaseTrainer):
         with torch.no_grad():
             for batch in test_loader:
                 X, y_t1, y_t2, y = batch
-                pred_t1, pred_t2 = model(X.squeeze(1), task_type=task_type)
+                pred_t1, pred_t2 = model(X, task_type=task_type)
                 
                 if task_type == 'mtl' or task_type == 't1':
                     pred_t1 = torch.argmax(pred_t1, dim=1)

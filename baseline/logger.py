@@ -1,6 +1,7 @@
 from torch.utils.tensorboard import SummaryWriter
 from logging import getLogger
 import logging
+import wandb
 
 
 class baselogger(object):
@@ -55,3 +56,14 @@ class CSVLogger(baselogger):
 
     def close(self):
         self.log_file.close()
+
+class WandbLogger(baselogger):
+    def __init__(self, log_dir) -> None:
+        super(WandbLogger, self).__init__()
+        wandb.init(project=log_dir)
+
+    def add_scalar(self, name, value, epoch):
+        wandb.log({name: value})
+
+    def close(self):
+        pass
