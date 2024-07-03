@@ -21,10 +21,11 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
     def write(self, epoch=0):
-        try:
-            self._writer.add_scalar(self._name, self.avg, epoch)
-        except Exception as e:
-            print(e)
+        if self.count !=0:
+            try:
+                self._writer.add_scalar(self._name, self.avg, epoch)
+            except Exception as e:
+                print(e)
 
 
 

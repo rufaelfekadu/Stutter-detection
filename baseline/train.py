@@ -18,12 +18,12 @@ def main(cfg):
 
     # logger = TensorboardLogger(log_dir=cfg.log_dir)
     # logger = CSVLogger(log_dir=cfg.log_dir)
-    logger = WandbLogger()
+    logger = WandbLogger(cfg)
     model = LSTMModel(input_size=40, hidden_size=64, num_layers=1,output_size=6)
     optimiser = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     criterion = {'t1': torch.nn.CrossEntropyLoss(), 't2': CCCLoss()}
 
-    trainer = Trainer(cfg, model=model,optimizer=optimiser, criterion=criterion, device=cfg.device, logger=logger)
+    trainer = Trainer(cfg, model=model,optimizer=optimiser, criterion=criterion, logger=logger)
     trainer.train()
     trainer.test()
 

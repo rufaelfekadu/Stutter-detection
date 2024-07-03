@@ -3,6 +3,8 @@ from yacs.config import CfgNode as CN
 
 _C = CN()
 
+_C.name = 'stutter-detection'
+
 # dataset configs
 _C.data_path = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/clips'
 _C.label_path = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/SEP-28k_labels_new.csv'
@@ -21,7 +23,7 @@ _C.output_size = 6
 
 # training configs
 _C.epochs = 10
-_C.task_type = 'mtl'
+_C.tasks = ['t1', 't2']
 _C.optimizer = 'adam'
 _C.lr = 0.001
 _C.batch_size = 32
