@@ -1,10 +1,15 @@
 
 import torch
-from utils import AverageMeter
+from utils import AverageMeter, f1_score_per_class, weighted_accuracy, EER, f1_score, multi_class_EER
 from tqdm import tqdm
 from data import get_dataloaders
-from sklearn.metrics import f1_score
 
+metric_bank={
+    'acc': lambda pred, y: (torch.argmax(pred, dim=1) == y).sum().item() / y.size(0),
+    'f1': f1_score,
+    'wacc': weighted_accuracy,
+    'eer': multi_class_EER
+}
 class BaseTrainer(object):
 
     def __init__(self, model, optimizer, criterion, device, logger=None):
@@ -16,8 +21,9 @@ class BaseTrainer(object):
         self.train_meters = {}
         self.test_meters = {}
         self.val_meters = {}
+        self.tasks = None
+        self.stage = None
         
-    
     def train(self):
         raise NotImplementedError
     
@@ -30,23 +36,29 @@ class BaseTrainer(object):
 
 class Trainer(BaseTrainer):
 
-    def __init__(self, cfg, model, optimizer, criterion, device, logger=None):
-        super(Trainer, self).__init__(model, optimizer, criterion, device, logger)
+    def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
+        super(Trainer, self).__init__(model, optimizer, criterion, cfg.device, logger)
+
         self.cfg = cfg
+        self.tasks = list(self.criterion.keys())
+
+        self.metrics = metrics
+        for metric in self.metrics:
+            setattr(self, metric, metric_bank[metric])
+
         self._init_meters()
         self.train_loader, self.val_loader, self.test_loader = get_dataloaders(cfg)
-
+        
         if torch.cuda.device_count() > 1:
             print("Using", torch.cuda.device_count(), "GPUs")
             self.model = torch.nn.DataParallel(self.model)
 
     def _init_meters(self):
-
-        for key in self.cfg.tasks:
+        for key in self.tasks:
             self.train_meters[f'{key}_train_loss'] = AverageMeter(name=f'{key}_train_loss', writer=self.logger)
             self.val_meters[f'{key}_val_loss'] = AverageMeter(name=f'{key}_val_loss', writer=self.logger)
-            self.test_meters[f'{key}_test_acc'] = AverageMeter(name='test_acc', writer=self.logger)
-
+            for metric in self.metrics:
+                self.test_meters[f'{key}_test_{metric}'] = AverageMeter(name=f'{key}_test_{metric}', writer=self.logger)
 
     def _reset_meters(self, meters):
         for meter in meters.values():
@@ -57,75 +69,61 @@ class Trainer(BaseTrainer):
             meter.write()
 
     def train(self):
-
+        self.stage = 'train'
         for epoch in range(self.cfg.epochs):
             self.model.train()
             self._reset_meters(self.train_meters)
 
-            tq_obj = tqdm(self.train_loader, desc=f'Epoch {epoch}', leave=True)
+            tq_obj = tqdm(self.train_loader, desc=f'Epoch {epoch}', leave=False)
             for batch in tq_obj:
                 losses = self.forward_backward(batch)
-                for key, loss in zip(self.cfg.tasks, losses):
+                if not isinstance(losses, tuple):
+                    losses = [losses]
+                for key, loss in zip(self.tasks, losses):
                     self.train_meters[f'{key}_train_loss'].update(loss)
-                tq_obj.set_postfix(t1_loss=f'{self.train_meters["t1_train_loss"].avg:.2f}', t2_loss=f'{self.train_meters["t2_train_loss"].avg:.2f}')             
-            for meter in self.meters.values():
-                meter.write(epoch)
+                    tq_obj.set_postfix({ key: loss })
+
+            self._write_meters(self.train_meters)
 
             # validation
             self.validate()
     
+    def _inference(self, batch, val=False):
+        return self.model_inference(batch, val)
+    
     def validate(self):
-
-        tasks = self.cfg.tasks
+        self.stage = 'val'
+        tasks = self.tasks
         self.model.eval()
-
         self._reset_meters(self.val_meters)
-
-        loss_t1, loss_t2 = self.criterion['t1'], self.criterion['t2']
 
         with torch.no_grad():
             for batch in self.val_loader:
-                X, y_t1, y_t2, _ = batch
-                X, y_t1, y_t2 = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device)
-                pred_t1, pred_t2 = self.model(X, tasks=tasks)
                 
-                if 't1' in tasks:
-                    loss1 = loss_t1(pred_t1, y_t1)
-                    self.val_meters['t1_val_loss'].update(loss1.item())
-
-                if 't2' in tasks:
-                    loss2 = loss_t2(pred_t2, y_t2)
-                    self.val_meters['t2_val_loss'].update(loss2.item())
-
+                _, losses, _ = self._inference(batch, val=True)
+                if not isinstance(losses, tuple):
+                    losses = [losses]
+                for key, loss in zip(tasks, losses):
+                    self.val_meters[f'{key}_val_loss'].update(loss)
         self._write_meters(self.val_meters)
 
-    def test(self, test_loader=None):
-
-        test_loader = test_loader if test_loader else self.test_loader
-
-        tasks = self.cfg.tasks
+    def test(self):
+        self.stage = 'test'
+        tasks = self.tasks
         self.model.eval()
         self._reset_meters(self.test_meters)
 
         with torch.no_grad():
-            for batch in test_loader:
-                X, y_t1, y_t2, y = batch
-                X, y_t1, y_t2, y = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device), y.to(self.device)
-                pred_t1, pred_t2 = self.model(X, tasks=tasks)
-                
-                if 't1' in tasks:
-                    pred_t1 = torch.argmax(pred_t1, dim=1)
-                    acc = (pred_t1 == y_t1).sum().item()
-                    self.meters['t1_test_acc'].update(acc, X.size(0))
-                if 't2' in tasks:
-                    pred_t2 = torch.argmax(pred_t2, dim=1)
-                    acc_fluency = (pred_t2 == y).sum().item()
-                    self.meters['t2_test_acc'].update(acc_fluency, X.size(0))
+            for batch in self.test_loader:
+                _, _, metrics = self.model_inference(batch)
+                if not isinstance(metrics, tuple):
+                    metrics = [metrics]
+                for key_task, metric in zip(tasks, metrics):
+                    for key_metric, val in metric.items():
+                        self.test_meters[f'{key_task}_test_{key_metric}'].update(val)
+                    
 
-            self.meters['t1_test_acc'].write()
-            self.meters['t2_test_acc'].write()
-
-        return self.meters['t1_test_acc'].avg, self.meters['t2_test_acc'].avg
+        self._write_meters(self.test_meters)
 
     def save_model(self, path):
         torch.save(self.model.state_dict(), path)
@@ -133,23 +131,23 @@ class Trainer(BaseTrainer):
     def load_model(self, path):
         self.model.load_state_dict(torch.load(path))
     
-    def get_model(self):
-        return self.model
-
     def forward_backward(self, x, y):
         raise NotImplementedError
     
     def model_inference(self, x):
         raise NotImplementedError
     
+    def compute_metrics(self, pred, y):
+        vals = {}
+        for metric in self.metrics:
+            vals[metric] = getattr(self, metric)(pred, y)
+        return vals
 
-class SimpleTrainer(Trainer):
+class MTLTrainer(Trainer):
 
-    def __init__(self, cfg, model, optimizer, criterion, device, logger=None):
-        super(SimpleTrainer, self).__init__(cfg, model, optimizer, criterion, device, logger)
-        self.tasks = cfg.tasks
-
-        assert len(self.tasks) == len(self.criterion), 'Number of tasks and criterion should be same'
+    def __init__(self, cfg, model, optimizer, criterion, logger=None):
+        super(MTLTrainer, self).__init__(cfg, model, optimizer, criterion, logger)
+        assert len(self.tasks) > 1, 'Specify more than 1 task for MTL'
         
     
     def forward_backward(self, batch):
@@ -176,9 +174,71 @@ class SimpleTrainer(Trainer):
 
         return loss1.item(), loss2.item()
     
-    def model_inference(self, x):
-        device = self.device
-        x = x.to(device)
-        pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
+    def model_inference(self, batch):
+        tasks = self.tasks
+        X, y_t1, y_t2, _ = batch
+        X, y_t1, y_t2 = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device)
+        pred_t1, pred_t2 = self.model(X, tasks=tasks)
+        loss1, loss2 = torch.tensor(0), torch.tensor(0)
 
-        return pred_t1, pred_t2
+        if 't1' in tasks:
+            loss1 = self.criterion['t1'](pred_t1, y_t1)
+            if self.stage == 'test':
+                metrics_1 = self.compute_metrics(pred_t1, y_t1)
+            
+        if 't2' in tasks:
+            loss2 = self.criterion['t2'](pred_t2, y_t2)
+            if self.stage == 'test':
+                metrics_2 = self.compute_metrics(pred_t2, y_t2)
+        
+        return (pred_t1, pred_t2), (loss1.item(), loss2.item()), (metrics_1, metrics_2)
+
+    
+
+class STLTrainer(Trainer):
+    
+    def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
+        super(STLTrainer, self).__init__(cfg, model, optimizer, criterion, logger, metrics)
+
+        if isinstance(self.criterion, dict):
+            self.tasks = list(self.criterion.keys())
+        else:
+            raise ValueError('Criterion should be a dictionary specify task type as key and loss function as value')
+        
+        assert len(self.tasks) == 1, 'Number of tasks should be 1 for STL'
+
+        self.criterion = self.criterion[self.tasks[0]]
+        
+    
+    def forward_backward(self, batch):
+        device = self.device
+        x, y_t1, y_t2, y = batch
+        x, y_t1, y_t2, y = x.to(device), y_t1.to(device), y_t2.to(device), y.to(device)
+
+        self.optimizer.zero_grad()
+        pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
+        if self.tasks[0] == 't1':
+            loss = self.criterion(pred_t1, y_t1)
+        else:
+            loss = self.criterion(pred_t2, y)
+        loss.backward()
+        self.optimizer.step()
+
+        return loss.item()
+    
+    def model_inference(self, batch, val=False):
+        X, y_t1, y_t2, y = batch
+        X, y_t1, y_t2, y = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device), y.to(self.device)
+        pred_t1, pred_t2 = self.model(X, tasks=self.tasks)
+        
+        metrics = {}
+        if self.tasks[0] == 't1':
+            loss = self.criterion(pred_t1, y_t1)
+            if self.stage == 'test':
+                metrics = self.compute_metrics(pred_t1, y_t1)
+        else:
+            loss = self.criterion(pred_t2, y)
+            if self.stage == 'test':
+                metrics = self.compute_metrics(pred_t2, y)
+
+        return  (pred_t1, pred_t2), loss.item(), metrics

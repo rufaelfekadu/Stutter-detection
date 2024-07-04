@@ -2,9 +2,9 @@ from configs import _C as cfg
 import argparse
 import torch
 
-from trainer import Trainer
+from trainer import MTLTrainer, STLTrainer
 from models import LSTMModel
-from utils import CCCLoss
+from utils import CCCLoss, CrossEntropyLoss, FocalLoss
 from logger import TensorboardLogger, CSVLogger, WandbLogger
 
 def parse_args():
@@ -19,11 +19,15 @@ def main(cfg):
     # logger = TensorboardLogger(log_dir=cfg.log_dir)
     # logger = CSVLogger(log_dir=cfg.log_dir)
     logger = WandbLogger(cfg)
-    model = LSTMModel(input_size=40, hidden_size=64, num_layers=1,output_size=6)
+    model = LSTMModel(input_size=cfg.input_size, 
+                      hidden_size=cfg.hidden_size, 
+                      num_layers=cfg.num_layers, 
+                      output_size=cfg.output_size, 
+                      dropout=cfg.dropout)
     optimiser = torch.optim.Adam(model.parameters(), lr=cfg.lr)
-    criterion = {'t1': torch.nn.CrossEntropyLoss(), 't2': CCCLoss()}
+    criterion = {'t2': CrossEntropyLoss()}
 
-    trainer = Trainer(cfg, model=model,optimizer=optimiser, criterion=criterion, logger=logger)
+    trainer = STLTrainer(cfg, model=model,optimizer=optimiser, criterion=criterion, logger=logger, metrics=['acc', 'f1', 'wacc', 'eer'])
     trainer.train()
     trainer.test()
 

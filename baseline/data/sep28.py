@@ -64,7 +64,7 @@ class Sep28K(Dataset):
         df = pd.read_csv(self.labels_path)
         df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['Show'], str(row['EpId']), f"{row['Show']}_{row['EpId']}_{row['ClipId']}.wav"), axis=1)
         df['label_fluent'] = df['NoStutteredWords'].map(lambda x: 1 if x >=2 else 0)
-        df['label_per_type'] = df[self.label_columns].apply(lambda row: -1 if row.max() <= 1 else self.label_columns.index(row.idxmax()), axis=1)
+        df['label_per_type'] = df[self.label_columns].apply(lambda row: len(self.label_columns) if row.max() <= 1 else self.label_columns.index(row.idxmax()), axis=1)
         # df['label_ccc'] = df[self.label_columns].apply(lambda row: row.values, axis=1)
 
         return df[['file_path', 'label_fluent', 'label_per_type']+self.label_columns]

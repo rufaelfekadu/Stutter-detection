@@ -19,6 +19,7 @@ _C.input_size = 40
 _C.hidden_size = 64
 _C.num_layers = 1
 _C.output_size = 6
+_C.dropout = 0.5
 
 
 # training configs

@@ -10,12 +10,17 @@ def get_dataloaders(cfg):
     dataset = Sep28K(cfg.data_path, cfg.label_path, ckpt_path=cfg.data_ckpt, transforms=transforms)
 
 
-    train_idx, val_idx = train_test_split(np.arange(0, len(dataset)), test_size=0.2, random_state=cfg.seed) 
-    val_idx, test_idx = train_test_split(val_idx, test_size=0.5, random_state=cfg.seed)
+    train_idx, val_idx = train_test_split(np.arange(0, len(dataset)), test_size=0.1, random_state=cfg.seed) 
+    val_idx, test_idx = train_test_split(val_idx, test_size=0.35, random_state=cfg.seed)
 
     train_dataset = torch.utils.data.Subset(dataset, train_idx)
     val_dataset = torch.utils.data.Subset(dataset, val_idx)
     test_dataset = torch.utils.data.Subset(dataset, test_idx)
+
+    #  print the y distribution for each split
+    print(f"Train: {np.unique(train_dataset.dataset.label_per_type[train_idx], return_counts=True)}")
+    print(f"Val: {np.unique(val_dataset.dataset.label_per_type[val_idx], return_counts=True)}")
+    print(f"Test: {np.unique(test_dataset.dataset.label_per_type[test_idx], return_counts=True)}")
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
