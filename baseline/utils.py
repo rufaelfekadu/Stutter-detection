@@ -33,7 +33,7 @@ class CrossEntropyLoss(nn.Module):
         super(CrossEntropyLoss, self).__init__()
 
     def forward(self, y_pred, y_true):
-        y_pred = F.log_softmax(y_pred, dim=1)
+        # y_pred = F.log_softmax(y_pred, dim=1)
         loss = F.cross_entropy(y_pred, y_true)
         return loss
 
@@ -214,8 +214,9 @@ def f1_score(predictions, labels):
     true_positives = (predictions * labels).sum().item()
     predicted_positives = predictions.sum().item()
     actual_positives = labels.sum().item()
+    false_positives = predicted_positives - true_positives
 
-    precision = true_positives / (predicted_positives + 1e-8)
+    precision = true_positives / (false_positives + predicted_positives + 1e-8)
     recall = true_positives / (actual_positives + 1e-8)
 
     f1 = 2 * (precision * recall) / (precision + recall + 1e-8)

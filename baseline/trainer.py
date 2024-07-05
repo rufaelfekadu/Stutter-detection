@@ -48,6 +48,10 @@ class Trainer(BaseTrainer):
 
         self._init_meters()
         self.train_loader, self.val_loader, self.test_loader = get_dataloaders(cfg)
+
+        # init best val loss for early stoping
+        self.best_val_loss = float('inf')
+        self.patience = cfg.patience
         
         if torch.cuda.device_count() > 1:
             print("Using", torch.cuda.device_count(), "GPUs")
@@ -59,6 +63,8 @@ class Trainer(BaseTrainer):
             self.val_meters[f'{key}_val_loss'] = AverageMeter(name=f'{key}_val_loss', writer=self.logger)
             for metric in self.metrics:
                 self.test_meters[f'{key}_test_{metric}'] = AverageMeter(name=f'{key}_test_{metric}', writer=self.logger)
+                self.test_meters[f'{key}_val_{metric}'] = AverageMeter(name=f'{key}_val_{metric}', writer=self.logger)
+                self.test_meters[f'{key}_train_{metric}'] = AverageMeter(name=f'{key}_train_{metric}', writer=self.logger)
 
     def _reset_meters(self, meters):
         for meter in meters.values():
@@ -86,10 +92,10 @@ class Trainer(BaseTrainer):
             self._write_meters(self.train_meters)
 
             # validation
-            self.validate()
+            if not self.validate(): break
     
-    def _inference(self, batch, val=False):
-        return self.model_inference(batch, val)
+    def _inference(self, batch):
+        return self.model_inference(batch)
     
     def validate(self):
         self.stage = 'val'
@@ -99,30 +105,41 @@ class Trainer(BaseTrainer):
 
         with torch.no_grad():
             for batch in self.val_loader:
-                
-                _, losses, _ = self._inference(batch, val=True)
+                _, losses, _ = self._inference(batch)
                 if not isinstance(losses, tuple):
                     losses = [losses]
                 for key, loss in zip(tasks, losses):
                     self.val_meters[f'{key}_val_loss'].update(loss)
-        self._write_meters(self.val_meters)
 
-    def test(self):
+
+            self._write_meters(self.val_meters)
+            #  Early Stopping
+            total_loss = sum([self.val_meters[f'{key}_val_loss'].avg for key in tasks])
+            if total_loss < self.best_val_loss:
+                self.best_val_loss = total_loss
+            else:
+                self.patience -= 1
+                if self.patience == 0:
+                    print("Early Stopping")
+                    return False
+        return True
+
+    def test(self, loader=None, name='test'):
+        loader = loader or self.test_loader
         self.stage = 'test'
         tasks = self.tasks
         self.model.eval()
         self._reset_meters(self.test_meters)
 
         with torch.no_grad():
-            for batch in self.test_loader:
+            for batch in loader:
                 _, _, metrics = self.model_inference(batch)
                 if not isinstance(metrics, tuple):
                     metrics = [metrics]
                 for key_task, metric in zip(tasks, metrics):
                     for key_metric, val in metric.items():
-                        self.test_meters[f'{key_task}_test_{key_metric}'].update(val)
+                        self.test_meters[f'{key_task}_{name}_{key_metric}'].update(val)
                     
-
         self._write_meters(self.test_meters)
 
     def save_model(self, path):
@@ -226,11 +243,10 @@ class STLTrainer(Trainer):
 
         return loss.item()
     
-    def model_inference(self, batch, val=False):
+    def model_inference(self, batch):
         X, y_t1, y_t2, y = batch
         X, y_t1, y_t2, y = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device), y.to(self.device)
         pred_t1, pred_t2 = self.model(X, tasks=self.tasks)
-        
         metrics = {}
         if self.tasks[0] == 't1':
             loss = self.criterion(pred_t1, y_t1)
@@ -241,4 +257,4 @@ class STLTrainer(Trainer):
             if self.stage == 'test':
                 metrics = self.compute_metrics(pred_t2, y)
 
-        return  (pred_t1, pred_t2), loss.item(), metrics
+        return  (pred_t1, pred_t2), loss.item(), metrics        

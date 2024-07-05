@@ -21,6 +21,8 @@ _C.num_layers = 1
 _C.output_size = 6
 _C.dropout = 0.5
 
+_C.patience = 5
+
 
 # training configs
 _C.epochs = 10

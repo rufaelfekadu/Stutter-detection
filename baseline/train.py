@@ -7,6 +7,17 @@ from models import LSTMModel
 from utils import CCCLoss, CrossEntropyLoss, FocalLoss
 from logger import TensorboardLogger, CSVLogger, WandbLogger
 
+def set_seed(seed):
+    import random
+    import numpy as np
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model')
     parser.add_argument('--config', type=str, default='baseline/config.yml')
@@ -24,11 +35,14 @@ def main(cfg):
                       num_layers=cfg.num_layers, 
                       output_size=cfg.output_size, 
                       dropout=cfg.dropout)
+    
     optimiser = torch.optim.Adam(model.parameters(), lr=cfg.lr)
     criterion = {'t2': CrossEntropyLoss()}
 
     trainer = STLTrainer(cfg, model=model,optimizer=optimiser, criterion=criterion, logger=logger, metrics=['acc', 'f1', 'wacc', 'eer'])
     trainer.train()
+    trainer.test(trainer.val_loader, name='val')
+    trainer.test(trainer.train_loader, name='train')
     trainer.test()
 
 
@@ -38,6 +52,8 @@ if __name__ == "__main__":
     cfg.merge_from_file(args.config)
     cfg.merge_from_list(args.opts)
     cfg.freeze()
+
+    set_seed(cfg.seed)
     
     print(cfg)
     

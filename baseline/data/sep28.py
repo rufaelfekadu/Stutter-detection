@@ -16,8 +16,7 @@ class Sep28K(Dataset):
         self.labels_path = label_path
         self.ckpt_path = ckpt_path
         self.label_columns = ['Prolongation', 'Block', 'SoundRep', 'WordRep', 'Interjection', 'NoStutteredWords']
-
-        if os.path.exists(ckpt_path):
+        if os.path.isfile(ckpt_path):
             print("************ Loading Cached Dataset ************")
             self.data, self.label_fluent, self.label_ccc, self.label_per_type = torch.load(ckpt_path)
             
@@ -30,7 +29,6 @@ class Sep28K(Dataset):
             self.label_ccc = torch.tensor(df[self.label_columns].values, dtype=torch.float32)
             if save:
                 torch.save((self.data, self.label_fluent, self.label_ccc, self.label_per_type), ckpt_path)
-
     
     def _load_audio_file(self, row):
         audio_path = row['file_path']
@@ -65,8 +63,9 @@ class Sep28K(Dataset):
         df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['Show'], str(row['EpId']), f"{row['Show']}_{row['EpId']}_{row['ClipId']}.wav"), axis=1)
         df['label_fluent'] = df['NoStutteredWords'].map(lambda x: 1 if x >=2 else 0)
         df['label_per_type'] = df[self.label_columns].apply(lambda row: len(self.label_columns) if row.max() <= 1 else self.label_columns.index(row.idxmax()), axis=1)
-        # df['label_ccc'] = df[self.label_columns].apply(lambda row: row.values, axis=1)
-
+        #  remove samples with ambigiues labels
+        df = df[~(df['label_per_type']==len(self.label_columns))]
+        df = df.reset_index(drop=True)
         return df[['file_path', 'label_fluent', 'label_per_type']+self.label_columns]
     
     
