@@ -117,6 +117,6 @@ if __name__ == '__main__':
 
     model = ConvolutionalModule()
     print(model)
-    x = torch.randn(32, 1, 257, 301)
+    x = torch.randn(32, 1, 257, 399)
     out = model(x)
     print(out.shape)

@@ -78,6 +78,7 @@ class Sep28K(Dataset):
 if __name__ == "__main__":
     label_path = 'datasets/sep28k/SEP-28k_labels_new.csv'
     data_path = 'datasets/sep28k/clips/'
-    train_transforms = transforms.MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
-    dataset = Sep28K(root=data_path, label_path=label_path, transforms=train_transforms)
+    ck_path = 'datasets/sep28k/dataset.pt'
+    train_transforms = transforms.MelSpectrogram(win_length=400, hop_length=160, n_mels=257)
+    dataset = Sep28K(root=data_path, ckpt_path=ck_path, label_path=label_path, transforms=train_transforms)
     print(dataset[0])
