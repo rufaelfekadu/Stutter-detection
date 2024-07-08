@@ -18,7 +18,7 @@ class LSTMModel(nn.Module):
 
         out, _ = self.lstm(x, (h0, c0))
         t1_out, t2_out = None, None
-
+        
         if 't1' in tasks:
             t1_out = self.fc1(out[:,-1,:])
         if 't2' in tasks:
