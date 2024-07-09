@@ -6,6 +6,7 @@ _C = CN()
 _C.name = 'stutter-detection'
 
 # dataset configs
+_C.dataset_name = 'sep28k'
 _C.data_path = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/clips'
 _C.label_path = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/SEP-28k_labels_new.csv'
 _C.data_ckpt = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/sep28k.pt'

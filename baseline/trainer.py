@@ -33,7 +33,6 @@ class BaseTrainer(object):
     def save_model(self):
         raise NotImplementedError
     
-
 class Trainer(BaseTrainer):
 
     def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
@@ -162,11 +161,10 @@ class Trainer(BaseTrainer):
 
 class MTLTrainer(Trainer):
 
-    def __init__(self, cfg, model, optimizer, criterion, logger=None):
-        super(MTLTrainer, self).__init__(cfg, model, optimizer, criterion, logger)
+    def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc']):
+        super(MTLTrainer, self).__init__(cfg, model, optimizer, criterion, logger, metrics = metrics)
         assert len(self.tasks) > 1, 'Specify more than 1 task for MTL'
         
-    
     def forward_backward(self, batch):
         device = self.device
         tasks = self.tasks
@@ -210,8 +208,6 @@ class MTLTrainer(Trainer):
         
         return (pred_t1, pred_t2), (loss1.item(), loss2.item()), (metrics_1, metrics_2)
 
-    
-
 class STLTrainer(Trainer):
     
     def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
@@ -226,7 +222,6 @@ class STLTrainer(Trainer):
 
         self.criterion = self.criterion[self.tasks[0]]
         
-    
     def forward_backward(self, batch):
         device = self.device
         x, y_t1, y_t2, y = batch
