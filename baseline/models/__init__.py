@@ -6,6 +6,6 @@ available_models = {
     'convlstm': ConvLSTM
 }
 
-def get_model(cfg):
-    return available_models[cfg.model_name]
+def build_model(cfg):
+    return available_models[cfg.model.name](**cfg.model)
 

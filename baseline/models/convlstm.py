@@ -89,12 +89,12 @@ class ConvLSTM(nn.Module):
 
         
         self.conv_module = ConvolutionalModule()
-        self.FCN = nn.Linear(64, self.emb_dim)
+        self.FCN = nn.Linear(16, self.emb_dim)
         self.lstm = nn.LSTM(self.emb_dim, self.hidden_size, self.num_layers, batch_first=True)
         self.fc2 = nn.Linear(self.hidden_size, self.num_classes)
         self.fc1 = nn.Linear(self.hidden_size, 2)
         
-    def forward(self, x, task=['t1', 't2']):
+    def forward(self, x, tasks=['t1', 't2']):
 
         x = x.unsqueeze(1)
         x = self.conv_module(x)
@@ -109,9 +109,9 @@ class ConvLSTM(nn.Module):
         out, _ = self.lstm(x, (h0, c0))
 
         t1_out, t2_out = None, None
-        if 't1' in task:
+        if 't1' in tasks:
             t1_out = self.fc1(out[:,-1,:])
-        if 't2' in task:
+        if 't2' in tasks:
             t2_out = self.fc2(out[:,-1,:])
         
         return t1_out, t2_out

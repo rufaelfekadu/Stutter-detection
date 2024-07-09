@@ -11,12 +11,12 @@ available_datasets = {
 }
 
 def get_dataset(cfg):
-    return available_datasets[cfg.dataset_name]
+    return available_datasets[cfg.data.name]
 
 def get_dataloaders(cfg):
     
     transforms = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
-    dataset = get_dataset(cfg)(cfg.data_path, cfg.label_path, ckpt_path=cfg.data_ckpt, transforms=transforms)
+    dataset = get_dataset(cfg)(cfg.data.root, cfg.data.label_path, ckpt_path=cfg.data.ckpt, transforms=transforms)
 
 
     train_idx, val_idx = train_test_split(np.arange(0, len(dataset)), test_size=0.1, random_state=cfg.seed) 
@@ -33,25 +33,25 @@ def get_dataloaders(cfg):
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
-        batch_size=cfg.batch_size,
+        batch_size=cfg.solver.batch_size,
         shuffle=True,
-        num_workers=cfg.num_workers,
+        num_workers=cfg.solver.num_workers,
         pin_memory=True,
     )
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
-        batch_size=cfg.batch_size,
+        batch_size=cfg.solver.batch_size,
         shuffle=False,
-        num_workers=cfg.num_workers,
+        num_workers=cfg.solver.num_workers,
         pin_memory=True,
     )
 
     test_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=cfg.batch_size,
+        batch_size=cfg.solver.batch_size,
         shuffle=False,
-        num_workers=cfg.num_workers,
+        num_workers=cfg.solver.num_workers,
         pin_memory=True,
     )
 

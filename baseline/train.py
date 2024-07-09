@@ -3,7 +3,7 @@ import argparse
 import torch
 
 from trainer import MTLTrainer, STLTrainer
-from models import LSTMModel
+from models import LSTMModel, build_model
 from utils import CCCLoss, CrossEntropyLoss, FocalLoss
 from logger import TensorboardLogger, CSVLogger, WandbLogger
 
@@ -27,19 +27,16 @@ def parse_args():
 
 def main(cfg):
 
-    # logger = TensorboardLogger(log_dir=cfg.log_dir)
+    # logger = TensorboardLogger(log_dir=cfg.output.log_dir)
     # logger = CSVLogger(log_dir=cfg.log_dir)
     logger = WandbLogger(cfg)
-    model = LSTMModel(input_size=cfg.input_size, 
-                      hidden_size=cfg.hidden_size, 
-                      num_layers=cfg.num_layers, 
-                      output_size=cfg.output_size, 
-                      dropout=cfg.dropout)
-    
-    optimiser = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+
+    model = build_model(cfg)
+    optimiser = torch.optim.Adam(model.parameters(), lr=cfg.solver.lr)
     criterion = {'t2': CrossEntropyLoss()}
 
-    trainer = STLTrainer(cfg, model=model,optimizer=optimiser, criterion=criterion, logger=logger, metrics=['acc', 'f1', 'wacc', 'eer'])
+    trainer = STLTrainer(cfg, model=model, optimizer=optimiser, criterion=criterion, logger=logger, metrics=['acc', 'f1', 'wacc', 'eer'])
+    
     trainer.train()
     trainer.test(trainer.val_loader, name='val')
     trainer.test(trainer.train_loader, name='train')
@@ -48,6 +45,7 @@ def main(cfg):
 
 
 if __name__ == "__main__":
+
     args = parse_args()
     cfg.merge_from_file(args.config)
     cfg.merge_from_list(args.opts)

@@ -36,7 +36,7 @@ class BaseTrainer(object):
 class Trainer(BaseTrainer):
 
     def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
-        super(Trainer, self).__init__(model, optimizer, criterion, cfg.device, logger)
+        super(Trainer, self).__init__(model, optimizer, criterion, cfg.solver.device, logger)
 
         self.cfg = cfg
         self.tasks = list(self.criterion.keys())
@@ -50,7 +50,7 @@ class Trainer(BaseTrainer):
 
         # init best val loss for early stoping
         self.best_val_loss = float('inf')
-        self.patience = cfg.patience
+        self.patience = cfg.solver.es_patience
         
         if torch.cuda.device_count() > 1:
             print("Using", torch.cuda.device_count(), "GPUs")
@@ -75,7 +75,7 @@ class Trainer(BaseTrainer):
 
     def train(self):
         self.stage = 'train'
-        for epoch in range(self.cfg.epochs):
+        for epoch in range(self.cfg.solver.epochs):
             self.model.train()
             self._reset_meters(self.train_meters)
 

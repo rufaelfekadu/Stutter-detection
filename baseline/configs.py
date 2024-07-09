@@ -27,6 +27,7 @@ _C.model.num_layers = 1
 _C.model.output_size = 6
 _C.model.dropout = 0.5
 _C.model.seq_len = 301
+_C.model.num_classes = 6
 
 # convlstm
 _C.model.emb_dim = 64
