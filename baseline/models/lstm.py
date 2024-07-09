@@ -3,13 +3,14 @@ import torch
 import torch.nn as nn
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size, dropout=0.2):
+    __acceptable_params__ = ['input_size', 'hidden_size', 'num_layers', 'output_size', 'dropout']
+    def __init__(self, **kwargs):
         super(LSTMModel, self).__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout)
-        self.fc1 = nn.Linear(hidden_size, 2)
-        self.fc2 = nn.Linear(hidden_size, output_size)
+        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params__]
+
+        self.lstm = nn.LSTM(self.input_size, self.hidden_size, self.num_layers, batch_first=True, dropout=self.dropout)
+        self.fc1 = nn.Linear(self.hidden_size, 2)
+        self.fc2 = nn.Linear(self.hidden_size, self.output_size)
 
     def forward(self, x: torch.Tensor, tasks=['t1', 't2']):
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
@@ -20,10 +21,23 @@ class LSTMModel(nn.Module):
         t1_out, t2_out = None, None
         
         if 't1' in tasks:
-            t1_out = self.fc1(out[:,-1,:])
+            t1_out = self.fc1(out[:, -1, :])
         if 't2' in tasks:
-            t2_out = self.fc2(out[:,-1,:])
+            t2_out = self.fc2(out[:, -1, :])
 
         return t1_out, t2_out
     
-       
+
+if __name__ == "__main__":
+    kwargs = {
+        'input_size': 40,
+        'hidden_size': 64,
+        'num_layers': 1,
+        'output_size': 6,
+        'dropout': 0.5
+        }
+    model = LSTMModel(**kwargs)
+    x = torch.rand(32, 40, 301)
+    t1_out, t2_out = model(x)
+    print(t1_out.shape, t2_out.shape)
+    print(model)

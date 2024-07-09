@@ -82,26 +82,27 @@ class ConvolutionalModule(nn.Module):
         return x
 
 class ConvLSTM(nn.Module):
-    def __init__(self, input_size=40, emb_dim=64, hidden_size=512, num_layers=2, num_classes=6):
+    __acceptable_params__ = ['emb_dim', 'hidden_size', 'num_layers', 'num_classes']
+    def __init__(self, **kwargs):
         super(ConvLSTM, self).__init__()
+        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params__]
 
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.emb_dim = emb_dim
         
         self.conv_module = ConvolutionalModule()
-        self.FCN = nn.Linear(64, emb_dim)
-        self.lstm = nn.LSTM(emb_dim, hidden_size, num_layers, batch_first=True)
-
-        self.fc2 = nn.Linear(hidden_size, num_classes)
-        self.fc1 = nn.Linear(hidden_size, 2)
+        self.FCN = nn.Linear(64, self.emb_dim)
+        self.lstm = nn.LSTM(self.emb_dim, self.hidden_size, self.num_layers, batch_first=True)
+        self.fc2 = nn.Linear(self.hidden_size, self.num_classes)
+        self.fc1 = nn.Linear(self.hidden_size, 2)
         
     def forward(self, x, task=['t1', 't2']):
 
+        x = x.unsqueeze(1)
         x = self.conv_module(x)
+
         b_size, _, _, seq_len = x.shape
         x = x.view(b_size, seq_len, -1)
         x = self.FCN(x)
+
         # Forward pass through LSTM
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
@@ -117,8 +118,13 @@ class ConvLSTM(nn.Module):
 
 if __name__ == '__main__':
 
-    model = ConvLSTM()
+    kwargs = {
+        'emb_dim': 64,
+        'hidden_size': 64,
+        'num_layers': 1,
+        'num_classes': 6
+    }
+    model = ConvLSTM(**kwargs)
     print(model)
-    x = torch.randn(32, 1, 257, 401)
-    out = model(x)
-    print(out.permute(0, 2, 1, 3).shape)
+    x = torch.randn(32, 40, 301)
+    t1_out, t2_out = model(x)
