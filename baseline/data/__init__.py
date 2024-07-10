@@ -13,12 +13,12 @@ available_datasets = {
 }
 
 def get_dataset(cfg):
-    return available_datasets[cfg.data.name]
+    return available_datasets[cfg.data.name](**cfg.data)
 
 def get_dataloaders(cfg):
     
-    transforms = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
-    dataset = get_dataset(cfg)(cfg.data.root, cfg.data.label_path, ckpt_path=cfg.data.ckpt, transforms=transforms)
+    # transforms = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
+    dataset = get_dataset(cfg)
 
 
     train_idx, val_idx = train_test_split(np.arange(0, len(dataset)), test_size=0.1, random_state=cfg.seed) 

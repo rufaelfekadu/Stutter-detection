@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 import torchaudio
-import torchaudio.transforms as transforms
+from torchaudio.transforms import MelSpectrogram
 import pandas as pd
 import os
 from tqdm import tqdm
@@ -9,16 +9,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class Sep28K(Dataset):
-    def __init__(self, root, label_path, ckpt_path='dataset.pt', transforms=None, save=True):
-        
+    __acceptable_params = ['root', 'label_path', 'win_length', 'hop_length', 'n_mels']
+    def __init__(self, transforms=None, save=True, **kwargs):
+        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
+        self.ckpt = self.ckpt or 'dataset.pt'
+
         self.transform = transforms
-        self.root = root
-        self.labels_path = label_path
-        self.ckpt_path = ckpt_path
+        self.mel_func = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
         self.label_columns = ['Prolongation', 'Block', 'SoundRep', 'WordRep', 'Interjection', 'NoStutteredWords']
-        if os.path.isfile(ckpt_path):
+
+        if os.path.isfile(self.ckpt):
             print("************ Loading Cached Dataset ************")
-            self.data, self.label_fluent, self.label_ccc, self.label_per_type = torch.load(ckpt_path)
+            self.data, self.label_fluent, self.label_ccc, self.label_per_type = torch.load(self.ckpt)
             
         else:
             print("************ Loading Dataset ************")
@@ -28,16 +30,15 @@ class Sep28K(Dataset):
             self.label_per_type = torch.tensor(df['label_per_type'].values, dtype=torch.long)
             self.label_ccc = torch.tensor(df[self.label_columns].values, dtype=torch.float32)
             if save:
-                torch.save((self.data, self.label_fluent, self.label_ccc, self.label_per_type), ckpt_path)
+                torch.save((self.data, self.label_fluent, self.label_ccc, self.label_per_type), self.ckpt)
     
     def _load_audio_file(self, row):
         audio_path = row['file_path']
         try:
             waveform, sample_rate = torchaudio.load(audio_path, format='wav')
-            mel_spec = self.transform(waveform) if self.transform else waveform
-            if mel_spec.shape[-1] < 301:
-                mel_spec = torch.cat([mel_spec, torch.zeros(1,40, 301 - mel_spec.shape[-1])], dim=2)
-
+            mel_spec = self.mel_func(waveform)
+            # if mel_spec.shape[-1] < 301:
+            #     mel_spec = torch.cat([mel_spec, torch.zeros(1,40, 301 - mel_spec.shape[-1])], dim=2)
             return (row.name, mel_spec)  # Return the index and the mel_spec
         except Exception as e:
             print(f"Error loading file {audio_path}: {e}")
@@ -73,12 +74,12 @@ class Sep28K(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx], self.label_fluent[idx], self.label_ccc[idx], self.label_per_type[idx]
+        return self.data[idx], (self.label_fluent[idx], self.label_ccc[idx], self.label_per_type[idx])
 
 if __name__ == "__main__":
     label_path = 'datasets/sep28k/SEP-28k_labels_new.csv'
     data_path = 'datasets/sep28k/clips/'
     ck_path = 'datasets/sep28k/dataset.pt'
-    train_transforms = transforms.MelSpectrogram(win_length=400, hop_length=160, n_mels=257)
+    train_transforms = MelSpectrogram(win_length=400, hop_length=160, n_mels=257)
     dataset = Sep28K(root=data_path, ckpt_path=ck_path, label_path=label_path, transforms=train_transforms)
     print(dataset[0])
