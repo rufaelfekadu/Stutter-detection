@@ -3,6 +3,7 @@ import torch
 from utils import AverageMeter, f1_score_per_class, weighted_accuracy, EER, f1_score_, multi_class_EER
 from tqdm import tqdm
 from data import get_dataloaders
+from models import build_model
 
 metric_bank={
     'acc': lambda pred, y: (torch.argmax(pred, dim=1) == y).sum().item() / y.size(0),
@@ -13,9 +14,9 @@ metric_bank={
 
 class BaseTrainer(object):
 
-    def __init__(self, model, optimizer, criterion, device, logger=None):
-        self.model = model.to(device)
-        self.optimizer = optimizer
+    def __init__(self, criterion, device, logger=None):
+        self.model = None
+        self.optimizer = None
         self.criterion = criterion
         self.device = device
         self.logger = logger
@@ -36,8 +37,8 @@ class BaseTrainer(object):
     
 class Trainer(BaseTrainer):
 
-    def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
-        super(Trainer, self).__init__(model, optimizer, criterion, cfg.solver.device, logger)
+    def __init__(self, cfg, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
+        super(Trainer, self).__init__(criterion, cfg.solver.device, logger)
 
         self.cfg = cfg
         self.tasks = list(self.criterion.keys())
@@ -48,6 +49,11 @@ class Trainer(BaseTrainer):
 
         self._init_meters()
         self.train_loader, self.val_loader, self.test_loader = get_dataloaders(cfg)
+
+        # build model
+        self.model = build_model(cfg).to(self.device)
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.solver.lr)
+        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=cfg.solver.lr_step, gamma=cfg.solver.lr_decay)
 
         # init best val loss for early stoping
         self.best_val_loss = float('inf')
@@ -147,6 +153,12 @@ class Trainer(BaseTrainer):
 
     def load_model(self, path):
         self.model.load_state_dict(torch.load(path))
+
+    def compute_metrics(self, pred, y):
+        vals = {}
+        for metric in self.metrics:
+            vals[metric] = getattr(self, metric)(pred, y)
+        return vals
     
     def forward_backward(self, x, y):
         raise NotImplementedError
@@ -154,12 +166,6 @@ class Trainer(BaseTrainer):
     def model_inference(self, x):
         raise NotImplementedError
     
-    def compute_metrics(self, pred, y):
-        vals = {}
-        for metric in self.metrics:
-            vals[metric] = getattr(self, metric)(pred, y)
-        return vals
-
 class MTLTrainer(Trainer):
 
     def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc']):
@@ -211,11 +217,12 @@ class MTLTrainer(Trainer):
 
 class STLTrainer(Trainer):
     
-    def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
-        super(STLTrainer, self).__init__(cfg, model, optimizer, criterion, logger, metrics)
+    def __init__(self, cfg, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
+        super(STLTrainer, self).__init__(cfg, criterion, logger, metrics)
 
         if isinstance(self.criterion, dict):
             self.tasks = list(self.criterion.keys())
+            self.task = self.tasks[0]
         else:
             raise ValueError('Criterion should be a dictionary specify task type as key and loss function as value')
         
@@ -230,12 +237,17 @@ class STLTrainer(Trainer):
 
         self.optimizer.zero_grad()
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
-        if self.tasks[0] == 't1':
+
+        if self.task == 't1':
             loss = self.criterion(pred_t1, y_t1)
-        else:
+        elif self.task == 't2':
             loss = self.criterion(pred_t2, y)
+        else:
+            raise ValueError('Task not found')
+        
         loss.backward()
         self.optimizer.step()
+        self.scheduler.step()
 
         return loss.item()
     

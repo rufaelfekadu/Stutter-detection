@@ -11,9 +11,9 @@ _C.tasks = ['t1', 't2']
 _C.data = CN()
 
 _C.data.name = 'sep28k'
-_C.data.root = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/clips'
-_C.data.label_path = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/SEP-28k_labels_new.csv'
-_C.data.ckpt = '/Users/apple/Documents/Projects/RA/stutter-detection/datasets/sep28k/sep28k.pt'
+_C.data.root = 'datasets/sep28k/clips'
+_C.data.label_path = 'datasets/sep28k/SEP-28k_labels_new.csv'
+_C.data.ckpt = 'datasets/sep28k/sep28k.pt'
 
 # data loader configs
 
@@ -37,15 +37,22 @@ _C.solver = CN()
 _C.solver.device = 'mps'
 _C.solver.epochs = 10
 
+# optimizer
 _C.solver.optimizer = 'adam'
 _C.solver.lr = 0.001
 
+# early stopping
 _C.solver.es_patience = 5
 
+#  dataloader
 _C.solver.batch_size = 32
 _C.solver.num_workers = 4
 
 _C.solver.log_interval = 10
+
+# scheduler
+_C.solver.lr_step = 10
+_C.solver.lr_decay = 0.1
 
 # logging and saving
 _C.output = CN()
