@@ -2,6 +2,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import f1_score, accuracy_score, roc_curve, balanced_accuracy_score
+from sklearn.preprocessing import label_binarize
+import numpy as np
 
 class AverageMeter(object):
     def __init__(self, name=None, writer=None):
@@ -157,33 +160,46 @@ class CCCLoss(nn.Module):
 
 def weighted_accuracy(y_pred, y_true):
     
-    num_classes = y_pred.shape[1]
+    # num_classes = y_pred.shape[1]
 
     y_pred = torch.argmax(y_pred, dim=1)
 
-    # Calculate the accuracy for each class
-    correct = (y_pred == y_true).float()
-    class_counts = torch.bincount(y_true, minlength=num_classes)
-    class_accuracies = torch.bincount(y_true, weights=correct, minlength=num_classes) / class_counts
+    # # Calculate the accuracy for each class
+    # correct = (y_pred == y_true).float()
+    # class_counts = torch.bincount(y_true, minlength=num_classes)
+    # class_accuracies = torch.bincount(y_true, weights=correct, minlength=num_classes) / class_counts
     
-    # Calculate the weighted accuracy
-    weighted_accuracy = (class_accuracies * class_counts).sum() / class_counts.sum()
+    # # Calculate the weighted accuracy
+    # weighted_accuracy = (class_accuracies * class_counts).sum() / class_counts.sum()
 
-    return weighted_accuracy.item()
+    return balanced_accuracy_score(y_true.cpu().numpy(), y_pred.cpu().numpy())
 
 def EER(y_pred, y_true):
 
-    y_pred = torch.argmax(y_pred, dim=1)
-    # Calculate the false positive rate and true positive rate for each threshold
-    thresholds = torch.linspace(0, 1, 1000)
-    fpr = torch.tensor([((y_pred >= t) & (y_true == 0)).float().mean().item() for t in thresholds])
-    tpr = torch.tensor([((y_pred >= t) & (y_true == 1)).float().mean().item() for t in thresholds])
+    # y_pred = torch.argmax(y_pred, dim=1)
+    # # Calculate the false positive rate and true positive rate for each threshold
+    # thresholds = torch.linspace(0, 1, 1000)
+    # fpr = torch.tensor([((y_pred >= t) & (y_true == 0)).float().mean().item() for t in thresholds])
+    # tpr = torch.tensor([((y_pred >= t) & (y_true == 1)).float().mean().item() for t in thresholds])
 
-    # Find the threshold that minimizes the difference between FPR and TPR
-    diff = torch.abs(fpr - (1 - tpr))
-    EER = fpr[diff.argmin()].item()
+    # # Find the threshold that minimizes the difference between FPR and TPR
+    # diff = torch.abs(fpr - (1 - tpr))
+    # EER = fpr[diff.argmin()].item()
+    y_true = y_true.cpu().numpy()
+    y_pred = y_pred.cpu().numpy()
+    n_classes = y_pred.shape[1]
+    y_true_binarized = label_binarize(y_true, classes=range(n_classes))
+    eers = []
 
-    return EER
+    for i in range(n_classes):
+        fpr, tpr, thresholds = roc_curve(y_true_binarized[:, i], y_pred[:, i])
+        fnr = 1 - tpr
+        eer_threshold = thresholds[np.nanargmin(np.absolute((fnr - fpr)))]
+        eer = fpr[np.nanargmin(np.absolute((fnr - fpr)))]
+        eers.append(eer)
+
+    average_eer = np.mean(eers)
+    return average_eer
 
 def multi_class_EER(y_pred, y_true):
     EERs = []
@@ -207,19 +223,19 @@ def multi_class_EER(y_pred, y_true):
     avg_EER = sum(EERs) / num_classes
     return avg_EER
 
-def f1_score(predictions, labels):
+def f1_score_(predictions, labels):
 
     predictions = torch.argmax(predictions, dim=1)
+    f1 = f1_score(predictions.cpu().numpy(), labels.cpu().numpy(), average='macro')
+    # true_positives = (predictions * labels).sum().item()
+    # predicted_positives = predictions.sum().item()
+    # actual_positives = labels.sum().item()
+    # false_positives = predicted_positives - actual_positives
 
-    true_positives = (predictions * labels).sum().item()
-    predicted_positives = predictions.sum().item()
-    actual_positives = labels.sum().item()
-    false_positives = predicted_positives - true_positives
+    # precision = true_positives / (false_positives + predicted_positives + 1e-8)
+    # recall = true_positives / (actual_positives + 1e-8)
 
-    precision = true_positives / (false_positives + predicted_positives + 1e-8)
-    recall = true_positives / (actual_positives + 1e-8)
-
-    f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
+    # f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
     
     return f1
 

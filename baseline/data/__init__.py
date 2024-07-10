@@ -1,5 +1,6 @@
 from .sep28 import Sep28K
 from .uclass import Uclass
+from .fluencybank import FluencyBank
 from torchaudio.transforms import MelSpectrogram
 from sklearn.model_selection import train_test_split
 import torch
@@ -7,6 +8,7 @@ import numpy as np
 
 available_datasets = {
     'uclass': Uclass,
+    'fluencybank': FluencyBank,
     'sep28k': Sep28K
 }
 

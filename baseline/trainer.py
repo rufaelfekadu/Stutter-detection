@@ -1,15 +1,16 @@
 
 import torch
-from utils import AverageMeter, f1_score_per_class, weighted_accuracy, EER, f1_score, multi_class_EER
+from utils import AverageMeter, f1_score_per_class, weighted_accuracy, EER, f1_score_, multi_class_EER
 from tqdm import tqdm
 from data import get_dataloaders
 
 metric_bank={
     'acc': lambda pred, y: (torch.argmax(pred, dim=1) == y).sum().item() / y.size(0),
-    'f1': f1_score,
+    'f1': f1_score_,
     'wacc': weighted_accuracy,
-    'eer': multi_class_EER
+    'eer': EER
 }
+
 class BaseTrainer(object):
 
     def __init__(self, model, optimizer, criterion, device, logger=None):
