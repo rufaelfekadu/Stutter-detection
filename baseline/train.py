@@ -31,9 +31,9 @@ def main(cfg):
     # logger = CSVLogger(log_dir=cfg.log_dir)
     logger = WandbLogger(cfg)
 
-    criterion = {'t2': CrossEntropyLoss()}
+    criterion = {'t2': torch.nn.BCEWithLogitsLoss()}
 
-    trainer = STLTrainer(cfg, criterion=criterion, logger=logger, metrics=['acc', 'f1', 'wacc', 'eer'])
+    trainer = STLTrainer(cfg, criterion=criterion, logger=logger, metrics=['f1'])
     
     trainer.train()
     trainer.test(trainer.val_loader, name='val')

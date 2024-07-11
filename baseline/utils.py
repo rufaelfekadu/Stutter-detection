@@ -8,6 +8,55 @@ import numpy as np
 
 class AverageMeter(object):
     def __init__(self, name=None, writer=None):
+        self._writer = writer
+        self._name = name
+        self.reset()
+
+    def reset(self):
+        self.val = [0]
+        self.avg = [0]
+        self.sum = [0]
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.count += n
+        if isinstance(val, list):
+            # Extend the lists if they are shorter than the incoming list
+            length_difference = len(val) - len(self.sum)
+            if length_difference > 0:
+                self.sum.extend([0] * length_difference)
+                self.avg.extend([0] * length_difference)
+                self.val.extend([0] * length_difference)
+
+            for i, v in enumerate(val):
+                self.sum[i] += v
+                self.avg[i] = self.sum[i] / self.count
+            self.val = val
+        else:
+            if not isinstance(self.sum, list):
+                self.sum = [self.sum]
+                self.avg = [self.avg]
+                self.val = [self.val]
+            self.sum[0] += val
+            self.avg[0] = self.sum[0] / self.count
+            self.val[0] = val
+
+    def write(self, epoch=0):
+        if self.count != 0:
+            if isinstance(self.avg, list):
+                for i, val in enumerate(self.avg):
+                    try:
+                        self._writer.add_scalar(f'{self._name}_{i}', val, epoch)
+                    except Exception as e:
+                        print(e)
+            else:
+                try:
+                    self._writer.add_scalar(self._name, self.avg, epoch)
+                except Exception as e:
+                    print(e)
+
+class LossMeter(object):
+    def __init__(self, name=None, writer=None):
         self.reset()
         self._writer = writer
         self._name = name
@@ -19,17 +68,28 @@ class AverageMeter(object):
         self.count = 0
 
     def update(self, val, n=1):
+        if isinstance(val, list):
+            val = sum(val) / len(val)
+            # log each value in the list
         self.val = val
         self.sum += val 
         self.count += n
         self.avg = self.sum / self.count
 
     def write(self, epoch=0):
+        #  if self.avg is list then log each value
         if self.count !=0:
-            try:
-                self._writer.add_scalar(self._name, self.avg, epoch)
-            except Exception as e:
-                print(e)
+            if isinstance(self.avg, list):
+                for i, val in enumerate(self.avg):
+                    try:
+                        self._writer.add_scalar(f'{self._name}_{i}', val, epoch)
+                    except Exception as e:
+                        print(e)
+            else:
+                try:
+                    self._writer.add_scalar(self._name, self.avg, epoch)
+                except Exception as e:
+                    print(e)
 
 class CrossEntropyLoss(nn.Module):
     def __init__(self):
@@ -94,6 +154,7 @@ class FocalLoss(nn.Module):
             return torch.sum(F_loss)
         else:
             return F_loss
+        
 
 
 class FocalLossMultiClass(nn.Module):
@@ -159,32 +220,11 @@ class CCCLoss(nn.Module):
 
 
 def weighted_accuracy(y_pred, y_true):
-    
-    # num_classes = y_pred.shape[1]
-
     y_pred = torch.argmax(y_pred, dim=1)
-
-    # # Calculate the accuracy for each class
-    # correct = (y_pred == y_true).float()
-    # class_counts = torch.bincount(y_true, minlength=num_classes)
-    # class_accuracies = torch.bincount(y_true, weights=correct, minlength=num_classes) / class_counts
-    
-    # # Calculate the weighted accuracy
-    # weighted_accuracy = (class_accuracies * class_counts).sum() / class_counts.sum()
-
     return balanced_accuracy_score(y_true.cpu().numpy(), y_pred.cpu().numpy())
 
 def EER(y_pred, y_true):
 
-    # y_pred = torch.argmax(y_pred, dim=1)
-    # # Calculate the false positive rate and true positive rate for each threshold
-    # thresholds = torch.linspace(0, 1, 1000)
-    # fpr = torch.tensor([((y_pred >= t) & (y_true == 0)).float().mean().item() for t in thresholds])
-    # tpr = torch.tensor([((y_pred >= t) & (y_true == 1)).float().mean().item() for t in thresholds])
-
-    # # Find the threshold that minimizes the difference between FPR and TPR
-    # diff = torch.abs(fpr - (1 - tpr))
-    # EER = fpr[diff.argmin()].item()
     y_true = y_true.cpu().numpy()
     y_pred = y_pred.cpu().numpy()
     n_classes = y_pred.shape[1]
@@ -201,59 +241,19 @@ def EER(y_pred, y_true):
     average_eer = np.mean(eers)
     return average_eer
 
-def multi_class_EER(y_pred, y_true):
-    EERs = []
-    num_classes = y_pred.shape[1]
-    for c in range(num_classes):
-        # Consider current class as positive and all others as negative
-        y_true_binary = (y_true == c).int()
-        y_pred_binary = torch.softmax(y_pred, dim=1)[:, c]
-
-        # Calculate the false positive rate and true positive rate for each threshold
-        thresholds = torch.linspace(0, 1, 1000)
-        fpr = torch.tensor([((y_pred_binary >= t) & (y_true_binary == 0)).float().mean().item() for t in thresholds])
-        tpr = torch.tensor([((y_pred_binary >= t) & (y_true_binary == 1)).float().mean().item() for t in thresholds])
-
-        # Find the threshold that minimizes the difference between FPR and TPR
-        diff = torch.abs(fpr - (1 - tpr))
-        EER = fpr[diff.argmin()].item()
-        EERs.append(EER)
-
-    # Calculate average EER across all classes
-    avg_EER = sum(EERs) / num_classes
-    return avg_EER
-
 def f1_score_(predictions, labels):
-
     predictions = torch.argmax(predictions, dim=1)
     f1 = f1_score(predictions.cpu().numpy(), labels.cpu().numpy(), average='macro')
-    # true_positives = (predictions * labels).sum().item()
-    # predicted_positives = predictions.sum().item()
-    # actual_positives = labels.sum().item()
-    # false_positives = predicted_positives - actual_positives
-
-    # precision = true_positives / (false_positives + predicted_positives + 1e-8)
-    # recall = true_positives / (actual_positives + 1e-8)
-
-    # f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
-    
     return f1
 
 def f1_score_per_class(predictions, labels):
     num_classes = predictions.shape[1]
-
-    predictions = torch.argmax(predictions, dim=1)
-    # Convert predictions and labels to one-hot encoding if they aren't already
-    predictions_one_hot = torch.eye(num_classes)[predictions]
-    labels_one_hot = torch.eye(num_classes)[labels]
-
-    true_positives = (predictions_one_hot * labels_one_hot).sum(dim=0)
-    predicted_positives = predictions_one_hot.sum(dim=0)
-    actual_positives = labels_one_hot.sum(dim=0)
-
-    precision = true_positives / (predicted_positives + 1e-8)
-    recall = true_positives / (actual_positives + 1e-8)
-
-    f1 = 2 * (precision * recall) / (precision + recall + 1e-8)
-    
+    # apply sigmoid to the predictions and set 1 if greater than 0.5
+    predictions = torch.sigmoid(predictions)
+    predictions = (predictions > 0.5).float()
+    f1 = []
+    for i in range(num_classes):
+        pred = predictions[:, i]
+        label = labels[:, i]
+        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy()))    
     return f1

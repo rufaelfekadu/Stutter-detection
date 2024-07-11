@@ -29,9 +29,9 @@ def get_dataloaders(cfg):
     test_dataset = torch.utils.data.Subset(dataset, test_idx)
 
     #  print the y distribution for each split
-    print(f"Train: {np.unique(train_dataset.dataset.label_per_type[train_idx], return_counts=True)}")
-    print(f"Val: {np.unique(val_dataset.dataset.label_per_type[val_idx], return_counts=True)}")
-    print(f"Test: {np.unique(test_dataset.dataset.label_per_type[test_idx], return_counts=True)}")
+    print(f"Train: {np.unique(train_dataset.dataset.label_fluent[train_idx], return_counts=True)}")
+    print(f"Val: {np.unique(val_dataset.dataset.label_fluent[val_idx], return_counts=True)}")
+    print(f"Test: {np.unique(test_dataset.dataset.label_fluent[test_idx], return_counts=True)}")
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,

@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class Sep28K(Dataset):
-    __acceptable_params = ['root', 'label_path', 'win_length', 'hop_length', 'n_mels']
+    __acceptable_params = ['root', 'label_path', 'ckpt', 'win_length', 'hop_length', 'n_mels']
     def __init__(self, transforms=None, save=True, **kwargs):
         [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
         self.ckpt = self.ckpt or 'dataset.pt'

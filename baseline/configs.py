@@ -13,7 +13,7 @@ _C.data = CN()
 _C.data.name = 'sep28k'
 _C.data.root = 'datasets/sep28k/clips'
 _C.data.label_path = 'datasets/sep28k/SEP-28k_labels_new.csv'
-_C.data.ckpt = 'datasets/sep28k/sep28k.pt'
+_C.data.ckpt = '../outputs/sep28k/sep28k.pt'
 
 # data loader configs
 

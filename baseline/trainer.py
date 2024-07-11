@@ -1,13 +1,13 @@
 
 import torch
-from utils import AverageMeter, f1_score_per_class, weighted_accuracy, EER, f1_score_, multi_class_EER
+from utils import AverageMeter, LossMeter, weighted_accuracy, EER, f1_score_, f1_score_per_class
 from tqdm import tqdm
 from data import get_dataloaders
 from models import build_model
 
 metric_bank={
     'acc': lambda pred, y: (torch.argmax(pred, dim=1) == y).sum().item() / y.size(0),
-    'f1': f1_score_,
+    'f1': f1_score_per_class,
     'wacc': weighted_accuracy,
     'eer': EER
 }
@@ -65,8 +65,8 @@ class Trainer(BaseTrainer):
 
     def _init_meters(self):
         for key in self.tasks:
-            self.train_meters[f'{key}_train_loss'] = AverageMeter(name=f'{key}_train_loss', writer=self.logger)
-            self.val_meters[f'{key}_val_loss'] = AverageMeter(name=f'{key}_val_loss', writer=self.logger)
+            self.train_meters[f'{key}_train_loss'] = LossMeter(name=f'{key}_train_loss', writer=self.logger)
+            self.val_meters[f'{key}_val_loss'] = LossMeter(name=f'{key}_val_loss', writer=self.logger)
             for metric in self.metrics:
                 self.test_meters[f'{key}_test_{metric}'] = AverageMeter(name=f'{key}_test_{metric}', writer=self.logger)
                 self.test_meters[f'{key}_val_{metric}'] = AverageMeter(name=f'{key}_val_{metric}', writer=self.logger)
@@ -241,7 +241,7 @@ class STLTrainer(Trainer):
         if self.task == 't1':
             loss = self.criterion(pred_t1, y_t1)
         elif self.task == 't2':
-            loss = self.criterion(pred_t2, y)
+            loss = self.criterion(pred_t2, y_t2)
         else:
             raise ValueError('Task not found')
         
@@ -256,13 +256,13 @@ class STLTrainer(Trainer):
         X, y_t1, y_t2, y = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device), y.to(self.device)
         pred_t1, pred_t2 = self.model(X, tasks=self.tasks)
         metrics = {}
-        if self.tasks[0] == 't1':
+        if self.task == 't1':
             loss = self.criterion(pred_t1, y_t1)
             if self.stage == 'test':
                 metrics = self.compute_metrics(pred_t1, y_t1)
         else:
-            loss = self.criterion(pred_t2, y)
+            loss = self.criterion(pred_t2, y_t2)
             if self.stage == 'test':
-                metrics = self.compute_metrics(pred_t2, y)
+                metrics = self.compute_metrics(pred_t2, y_t2)
 
         return  (pred_t1, pred_t2), loss.item(), metrics        
