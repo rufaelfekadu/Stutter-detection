@@ -1,4 +1,4 @@
-
+import os
 import torch
 from utils import AverageMeter, LossMeter, weighted_accuracy, EER, f1_score_, f1_score_per_class
 from tqdm import tqdm
@@ -7,7 +7,7 @@ from models import build_model
 
 metric_bank={
     'acc': lambda pred, y: (torch.argmax(pred, dim=1) == y).sum().item() / y.size(0),
-    'f1': f1_score_per_class,
+    'f1': f1_score_,
     'wacc': weighted_accuracy,
     'eer': EER
 }
@@ -62,6 +62,9 @@ class Trainer(BaseTrainer):
         if torch.cuda.device_count() > 1:
             print("Using", torch.cuda.device_count(), "GPUs")
             self.model = torch.nn.DataParallel(self.model)
+        
+        # makedir for saving checkpoints
+        os.makedirs(cfg.output.save_dir, exist_ok=True)
 
     def _init_meters(self):
         for key in self.tasks:
@@ -79,6 +82,12 @@ class Trainer(BaseTrainer):
     def _write_meters(self, meters):
         for meter in meters.values():
             meter.write()
+    
+    def _update_meters(self, meters, val):
+        if not isinstance(val, list):
+            val = [val]
+        for key, value in zip(self.tasks, val):
+            meters[f'{key}_{self.stage}_loss'].update(value)
 
     def train(self):
         self.stage = 'train'
@@ -98,10 +107,22 @@ class Trainer(BaseTrainer):
             self._write_meters(self.train_meters)
 
             # validation
-            if not self.validate(): break
+            if not self.validate(): 
+                self.save_model('last_checkpoint.pt')
+                break
     
     def _inference(self, batch):
-        return self.model_inference(batch)
+        _,y = self.parse_batch_test(batch)
+        preds =  self.model_inference(batch)
+
+        if self.stage == 'val':
+            losses = self.criterion(preds, y)
+            self._update_meters(self.val_meters, losses)
+
+        elif self.stage == 'test':
+            metrics = self.compute_metrics(preds, y)
+
+        return preds, losses, metrics
     
     def validate(self):
         self.stage = 'val'
@@ -123,6 +144,7 @@ class Trainer(BaseTrainer):
             total_loss = sum([self.val_meters[f'{key}_val_loss'].avg for key in tasks])
             if total_loss < self.best_val_loss:
                 self.best_val_loss = total_loss
+                self.save_model('best_checkpoint.pt')
             else:
                 self.patience -= 1
                 if self.patience == 0:
@@ -149,16 +171,22 @@ class Trainer(BaseTrainer):
         self._write_meters(self.test_meters)
 
     def save_model(self, path):
-        torch.save(self.model.state_dict(), path)
+        torch.save(self.model.state_dict(), os.path.join(self.cfg.output.save_dir, path))
 
-    def load_model(self, path):
-        self.model.load_state_dict(torch.load(path))
+    def load_model(self, path='best_checkpoint.pt'):
+        self.model.load_state_dict(torch.load(os.path.join(self.cfg.output.save_dir, path)))
 
     def compute_metrics(self, pred, y):
         vals = {}
         for metric in self.metrics:
             vals[metric] = getattr(self, metric)(pred, y)
         return vals
+    
+    def parse_batch_train(self, batch):
+        raise NotImplementedError
+    
+    def parse_batch_test(self, batch):
+        raise NotImplementedError
     
     def forward_backward(self, x, y):
         raise NotImplementedError
@@ -229,12 +257,25 @@ class STLTrainer(Trainer):
         assert len(self.tasks) == 1, 'Number of tasks should be 1 for STL'
 
         self.criterion = self.criterion[self.tasks[0]]
-        
+    
+    def parse_batch_train(self, batch):
+        x = batch['mel_spec']
+        y = batch['label_per_type']
+        y_t1 = batch['label_fluent']
+        y_t2 = batch['label_ccc']
+        return x.to(self.device), y.to(self.device), y_t1.to(self.device), y_t2.to(self.device) 
+    
+    def parse_batch_test(self, batch):
+        x = batch['mel_spec']
+        y = batch['label_per_type']
+        return x.to(self.device), y.to(self.device)
+    
     def forward_backward(self, batch):
-        device = self.device
-        x, y_t1, y_t2, y = batch
-        x, y_t1, y_t2, y = x.to(device), y_t1.to(device), y_t2.to(device), y.to(device)
 
+        # device = self.device
+        # x, y_t1, y_t2, y = batch
+        # x, y_t1, y_t2, y = x.to(device), y_t1.to(device), y_t2.to(device), y.to(device)
+        x, y, y_t1, y_t2 = self.parse_batch_train(batch)
         self.optimizer.zero_grad()
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
 
@@ -252,8 +293,9 @@ class STLTrainer(Trainer):
         return loss.item()
     
     def model_inference(self, batch):
-        X, y_t1, y_t2, y = batch
-        X, y_t1, y_t2, y = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device), y.to(self.device)
+        # X, y_t1, y_t2, y = batch
+        # X, y_t1, y_t2, y = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device), y.to(self.device)
+        X, y, y_t1, y_t2 = self.parse_batch_train(batch)
         pred_t1, pred_t2 = self.model(X, tasks=self.tasks)
         metrics = {}
         if self.task == 't1':
@@ -261,7 +303,7 @@ class STLTrainer(Trainer):
             if self.stage == 'test':
                 metrics = self.compute_metrics(pred_t1, y_t1)
         else:
-            loss = self.criterion(pred_t2, y_t2)
+            loss = self.criterion(pred_t2, y)
             if self.stage == 'test':
                 metrics = self.compute_metrics(pred_t2, y_t2)
 

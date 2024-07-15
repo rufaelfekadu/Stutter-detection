@@ -3,7 +3,7 @@ import argparse
 import torch
 
 from trainer import MTLTrainer, STLTrainer
-from models import LSTMModel, build_model
+from models import  build_model
 from utils import CCCLoss, CrossEntropyLoss, FocalLoss
 from logger import TensorboardLogger, CSVLogger, WandbLogger
 
@@ -31,13 +31,15 @@ def main(cfg):
     # logger = CSVLogger(log_dir=cfg.log_dir)
     logger = WandbLogger(cfg)
 
-    criterion = {'t2': torch.nn.BCEWithLogitsLoss()}
+    criterion = {'t2': CrossEntropyLoss()}
 
     trainer = STLTrainer(cfg, criterion=criterion, logger=logger, metrics=['f1'])
     
     trainer.train()
-    trainer.test(trainer.val_loader, name='val')
-    trainer.test(trainer.train_loader, name='train')
+
+    trainer.load_model()
+    # trainer.test(trainer.val_loader, name='val')
+    # trainer.test(trainer.train_loader, name='train')
     trainer.test()
 
 

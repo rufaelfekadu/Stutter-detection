@@ -255,5 +255,5 @@ def f1_score_per_class(predictions, labels):
     for i in range(num_classes):
         pred = predictions[:, i]
         label = labels[:, i]
-        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy()))    
+        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy()), average='macro')    
     return f1

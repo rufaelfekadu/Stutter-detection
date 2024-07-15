@@ -17,7 +17,6 @@ class Sep28K(Dataset):
         self.transform = transforms
         self.mel_func = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
         self.label_columns = ['Prolongation', 'Block', 'SoundRep', 'WordRep', 'Interjection', 'NoStutteredWords']
-
         if os.path.isfile(self.ckpt):
             print("************ Loading Cached Dataset ************")
             self.data, self.label_fluent, self.label_ccc, self.label_per_type = torch.load(self.ckpt)
@@ -37,8 +36,8 @@ class Sep28K(Dataset):
         try:
             waveform, sample_rate = torchaudio.load(audio_path, format='wav')
             mel_spec = self.mel_func(waveform)
-            # if mel_spec.shape[-1] < 301:
-            #     mel_spec = torch.cat([mel_spec, torch.zeros(1,40, 301 - mel_spec.shape[-1])], dim=2)
+            if mel_spec.shape[-1] < 301:
+                mel_spec = torch.cat([mel_spec, torch.zeros(1,40, 301 - mel_spec.shape[-1])], dim=2)
             return (row.name, mel_spec)  # Return the index and the mel_spec
         except Exception as e:
             print(f"Error loading file {audio_path}: {e}")
@@ -60,13 +59,15 @@ class Sep28K(Dataset):
     
     def _load_data(self):
         data_path = self.root
-        df = pd.read_csv(self.labels_path)
+        df = pd.read_csv(self.label_path)
         df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['Show'], str(row['EpId']), f"{row['Show']}_{row['EpId']}_{row['ClipId']}.wav"), axis=1)
         df['label_fluent'] = df['NoStutteredWords'].map(lambda x: 1 if x >=2 else 0)
         df['label_per_type'] = df[self.label_columns].apply(lambda row: len(self.label_columns) if row.max() <= 1 else self.label_columns.index(row.idxmax()), axis=1)
         #  remove samples with ambigiues labels
-        df = df[~(df['label_per_type']==len(self.label_columns))]
-        df = df.reset_index(drop=True)
+        # df = df[~(df['label_per_type']==len(self.label_columns))]
+        # df = df.reset_index(drop=True)
+        # df[self.label_columns] = df[self.label_columns].map(lambda x: 1 if x >= 2 else 0)
+
         return df[['file_path', 'label_fluent', 'label_per_type']+self.label_columns]
     
     
@@ -74,7 +75,13 @@ class Sep28K(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        return self.data[idx], (self.label_fluent[idx], self.label_ccc[idx], self.label_per_type[idx])
+        return {
+            'mel_spec': self.data[idx],
+            'label_fluent': self.label_fluent[idx],
+            'label_ccc': self.label_ccc[idx],
+            'label_per_type': self.label_per_type[idx]
+        }
+        # return self.data[idx], self.label_fluent[idx], self.label_ccc[idx], self.label_per_type[idx]
 
 if __name__ == "__main__":
     label_path = 'datasets/sep28k/SEP-28k_labels_new.csv'
