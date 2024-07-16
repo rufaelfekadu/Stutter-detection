@@ -82,7 +82,7 @@ class ConvolutionalModule(nn.Module):
         return x
 
 class ConvLSTM(nn.Module):
-    __acceptable_params__ = ['emb_dim', 'hidden_size', 'num_layers', 'num_classes', 'dropout' ]
+    __acceptable_params__ = ['emb_dim', 'hidden_size', 'num_layers', 'output_size', 'dropout' ]
     def __init__(self, **kwargs):
         super(ConvLSTM, self).__init__()
         [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params__]
@@ -90,7 +90,7 @@ class ConvLSTM(nn.Module):
         self.conv_module = ConvolutionalModule()
         self.FCN = nn.Linear(16, self.emb_dim)
         self.lstm = nn.LSTM(self.emb_dim, self.hidden_size, self.num_layers, batch_first=True, dropout=self.dropout)
-        self.fc2 = nn.Linear(self.hidden_size, self.num_classes)
+        self.fc2 = nn.Linear(self.hidden_size, self.output_size)
         self.fc1 = nn.Linear(self.hidden_size, 2)
         
     def forward(self, x, tasks=['t1', 't2']):
