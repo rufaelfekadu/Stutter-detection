@@ -1,21 +1,13 @@
 from configs import _C as cfg
 import argparse
 import torch
+import os
+
 
 from trainer import MTLTrainer, STLTrainer
 from models import  build_model
-from utils import CCCLoss, CrossEntropyLoss, FocalLoss
+from utils import CCCLoss, CrossEntropyLoss, FocalLoss, setup_exp
 from logger import TensorboardLogger, CSVLogger, WandbLogger
-
-def set_seed(seed):
-    import random
-    import numpy as np
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 
 def parse_args():
@@ -27,11 +19,9 @@ def parse_args():
 
 def main(cfg):
 
-    # logger = TensorboardLogger(log_dir=cfg.output.log_dir)
-    # logger = CSVLogger(log_dir=cfg.log_dir)
     logger = WandbLogger(cfg)
 
-    criterion = {'t2': CrossEntropyLoss()}
+    criterion = {'t1': CrossEntropyLoss()}
 
     trainer = STLTrainer(cfg, criterion=criterion, logger=logger, metrics=['f1'])
     
@@ -47,12 +37,10 @@ def main(cfg):
 if __name__ == "__main__":
 
     args = parse_args()
+
     cfg.merge_from_file(args.config)
     cfg.merge_from_list(args.opts)
-    cfg.freeze()
 
-    set_seed(cfg.seed)
-    
-    print(cfg)
-    
+    setup_exp(cfg)
+
     main(cfg)

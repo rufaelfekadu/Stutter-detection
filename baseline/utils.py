@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from sklearn.metrics import f1_score, accuracy_score, roc_curve, balanced_accuracy_score
 from sklearn.preprocessing import label_binarize
 import numpy as np
+import os
 
 class AverageMeter(object):
     def __init__(self, name=None, writer=None):
@@ -96,7 +97,8 @@ class CrossEntropyLoss(nn.Module):
         super(CrossEntropyLoss, self).__init__()
 
     def forward(self, y_pred, y_true):
-        # y_pred = F.log_softmax(y_pred, dim=1)
+        y_pred = F.softmax(y_pred, dim=1)
+        # y_pred = torch.argmax(y_pred, dim=1)
         loss = F.cross_entropy(y_pred, y_true)
         return loss
 
@@ -257,3 +259,30 @@ def f1_score_per_class(predictions, labels):
         label = labels[:, i]
         f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy()), average='macro')    
     return f1
+
+
+def set_seed(seed):
+    import random
+    import numpy as np
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    
+def setup_exp(cfg):
+
+    cfg.data.ckpt = os.path.join(cfg.output.save_dir, cfg.data.ckpt)
+    cfg.output.log_dir = os.path.join(cfg.output.save_dir, cfg.output.log_dir)
+    cfg.output.checkpoint_dir = os.path.join(cfg.output.save_dir, cfg.output.checkpoint_dir)
+    cfg.freeze()
+    
+    # make directories
+    os.makedirs(cfg.output.save_dir, exist_ok=True)
+    os.makedirs(cfg.output.log_dir, exist_ok=True)
+    os.makedirs(cfg.output.checkpoint_dir, exist_ok=True)
+    os.makedirs(cfg.data.ckpt, exist_ok=True)
+
+    # set seed
+    set_seed(cfg.seed)
