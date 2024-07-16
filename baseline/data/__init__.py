@@ -12,26 +12,21 @@ available_datasets = {
     'sep28k': Sep28K
 }
 
-def get_dataset(cfg):
-    return available_datasets[cfg.data.name](**cfg.data)
+def get_dataset(cfg, split='train'):
+    return available_datasets[cfg.data.name](**cfg.data, split=split)
 
 def get_dataloaders(cfg):
     
     # transforms = MelSpectrogram(win_length=400, hop_length=160, n_mels=40)
-    dataset = get_dataset(cfg)
-
-
-    train_idx, val_idx = train_test_split(np.arange(0, len(dataset)), test_size=0.1, random_state=cfg.seed) 
-    val_idx, test_idx = train_test_split(val_idx, test_size=0.35, random_state=cfg.seed)
-
-    train_dataset = torch.utils.data.Subset(dataset, train_idx)
-    val_dataset = torch.utils.data.Subset(dataset, val_idx)
-    test_dataset = torch.utils.data.Subset(dataset, test_idx)
+    train_dataset = get_dataset(cfg, split='train')
+    val_dataset = get_dataset(cfg, split='val')
+    test_dataset = get_dataset(cfg, split='test')
 
     #  print the y distribution for each split
-    print(f"Train: {np.unique(train_dataset.dataset.label_fluent[train_idx], return_counts=True)}")
-    print(f"Val: {np.unique(val_dataset.dataset.label_fluent[val_idx], return_counts=True)}")
-    print(f"Test: {np.unique(test_dataset.dataset.label_fluent[test_idx], return_counts=True)}")
+    print(f"Train: {np.unique(train_dataset.label_fluent, return_counts=True)}")
+    print(f"Val: {np.unique(val_dataset.label_fluent, return_counts=True)}")
+    print(f"Test: {np.unique(test_dataset.label_fluent, return_counts=True)}")
+
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
