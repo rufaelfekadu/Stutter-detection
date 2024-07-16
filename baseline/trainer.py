@@ -25,6 +25,9 @@ class BaseTrainer(object):
         self.val_meters = {}
         self.tasks = None
         self.stage = None
+        self.epoch = 0
+        self.best_epoch = 0
+
         
     def train(self):
         raise NotImplementedError
@@ -53,15 +56,18 @@ class Trainer(BaseTrainer):
         # build model
         self.model = build_model(cfg).to(self.device)
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.solver.lr)
-        self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=cfg.solver.lr_step, gamma=cfg.solver.lr_decay)
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=2, verbose=True)
+        # self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[34, 58, 72], gamma=0.4)
+        # self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=40, eta_min=0)
+        # self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=cfg.solver.lr_step, gamma=cfg.solver.lr_decay)
 
         # init best val loss for early stoping
         self.best_val_loss = float('inf')
         self.patience = cfg.solver.es_patience
         
-        if torch.cuda.device_count() > 1:
-            print("Using", torch.cuda.device_count(), "GPUs")
-            self.model = torch.nn.DataParallel(self.model)
+        # if torch.cuda.device_count() > 1:
+        #     print("Using", torch.cuda.device_count(), "GPUs")
+        #     self.model = torch.nn.DataParallel(self.model)
         
         # makedir for saving checkpoints
         os.makedirs(cfg.output.save_dir, exist_ok=True)
@@ -104,13 +110,17 @@ class Trainer(BaseTrainer):
                     self.train_meters[f'{key}_train_loss'].update(loss)
                     tq_obj.set_postfix({ key: loss })
 
+            
+
             self._write_meters(self.train_meters)
 
             # validation
             if not self.validate(): 
                 self.save_model('last_checkpoint.pt')
                 break
-    
+
+            self.epoch += 1
+
     def _inference(self, batch):
         _,y = self.parse_batch_test(batch)
         preds =  self.model_inference(batch)
@@ -132,23 +142,27 @@ class Trainer(BaseTrainer):
 
         with torch.no_grad():
             for batch in self.val_loader:
-                _, losses, _ = self._inference(batch)
+                _, losses, _ = self.model_inference(batch)
                 if not isinstance(losses, tuple):
                     losses = [losses]
                 for key, loss in zip(tasks, losses):
                     self.val_meters[f'{key}_val_loss'].update(loss)
 
+            self.scheduler.step(self.val_meters[f'{key}_val_loss'].avg)
+            # self.scheduler.step(self.epoch)
 
             self._write_meters(self.val_meters)
             #  Early Stopping
             total_loss = sum([self.val_meters[f'{key}_val_loss'].avg for key in tasks])
             if total_loss < self.best_val_loss:
                 self.best_val_loss = total_loss
+                self.best_epoch = self.epoch
                 self.save_model('best_checkpoint.pt')
+                self.patience = self.cfg.solver.es_patience
             else:
                 self.patience -= 1
                 if self.patience == 0:
-                    print("Early Stopping")
+                    print(f"Early Stopping at epoch {self.epoch} \nbest epoch at {self.best_epoch} with loss {self.best_val_loss}")
                     return False
         return True
 
@@ -171,10 +185,12 @@ class Trainer(BaseTrainer):
         self._write_meters(self.test_meters)
 
     def save_model(self, path):
-        torch.save(self.model.state_dict(), os.path.join(self.cfg.output.save_dir, path))
+        path = os.path.join(self.cfg.output.checkpoint_dir, path)
+        torch.save(self.model.state_dict(), path)
 
     def load_model(self, path='best_checkpoint.pt'):
-        self.model.load_state_dict(torch.load(os.path.join(self.cfg.output.save_dir, path)))
+        path = os.path.join(self.cfg.output.checkpoint_dir, path)
+        self.model.load_state_dict(torch.load(path))
 
     def compute_metrics(self, pred, y):
         vals = {}
@@ -271,10 +287,6 @@ class STLTrainer(Trainer):
         return x.to(self.device), y.to(self.device)
     
     def forward_backward(self, batch):
-
-        # device = self.device
-        # x, y_t1, y_t2, y = batch
-        # x, y_t1, y_t2, y = x.to(device), y_t1.to(device), y_t2.to(device), y.to(device)
         x, y, y_t1, y_t2 = self.parse_batch_train(batch)
         self.optimizer.zero_grad()
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
@@ -282,13 +294,12 @@ class STLTrainer(Trainer):
         if self.task == 't1':
             loss = self.criterion(pred_t1, y_t1)
         elif self.task == 't2':
-            loss = self.criterion(pred_t2, y_t2)
+            loss = self.criterion(pred_t2, y)
         else:
             raise ValueError('Task not found')
         
         loss.backward()
         self.optimizer.step()
-        self.scheduler.step()
 
         return loss.item()
     
@@ -307,4 +318,4 @@ class STLTrainer(Trainer):
             if self.stage == 'test':
                 metrics = self.compute_metrics(pred_t2, y_t2)
 
-        return  (pred_t1, pred_t2), loss.item(), metrics        
+        return   (pred_t1, pred_t2), loss.item(), metrics        
