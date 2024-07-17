@@ -1,0 +1,7 @@
+
+data: 
+  name: 'sep28k'
+  root: 'datasets/sep28k/clips'
+  label_path: 'datasets/sep28k/SEP-28k_labels.csv'
+
+

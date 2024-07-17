@@ -1,0 +1,18 @@
+
+solver:
+  num_workers: 8
+  batch_size: 256
+  epochs: 200
+  lr: 0.01
+  es_patience: 50
+  device: 'cuda'
+
+# model
+model:
+  name: 'convlstm'
+  hidden_size: 256
+  num_layers: 2
+  dropout: 0.3
+  output_size: 6
+
+
