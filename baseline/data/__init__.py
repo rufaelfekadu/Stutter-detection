@@ -23,11 +23,15 @@ def get_dataloaders(cfg):
     test_dataset = get_dataset(cfg, split='test')
 
     #  print the y distribution for each split
-    print(f"Train: {np.unique(train_dataset.label_fluent, return_counts=True)}")
-    print(f"Val: {np.unique(val_dataset.label_fluent, return_counts=True)}")
-    print(f"Test: {np.unique(test_dataset.label_fluent, return_counts=True)}")
-
-
+    # print(f"Train: {np.unique(train_dataset.label, return_counts=True, axis=0)}")
+    # print(f"Val: {np.unique(val_dataset.label, return_counts=True)}")
+    # print(f"Test: {np.unique(test_dataset.label, return_counts=True)}")
+    print('******train distribution****\n'+'\n'.join([f'{(np.unique((train_dataset.label>2).float()[:,i], return_counts=True)[1])}' for i in range(train_dataset.label.shape[1])]))
+    print('******val distribution****\n'+'\n'.join([f'{(np.unique((val_dataset.label>2).float()[:,i], return_counts=True)[1])}' for i in range(val_dataset.label.shape[1])]))
+    print('******test distribution****\n'+'\n'.join([f'{(np.unique((test_dataset.label>2).float()[:,i], return_counts=True)[1])}' for i in range(test_dataset.label.shape[1])]))
+    #  get weights for loss function
+    weights = [(np.unique((train_dataset.label>2).float()[:,i], return_counts=True)[1]/len(train_dataset))[0] for i in range(train_dataset.label.shape[1])]
+    print('******weights for the BCE loss****\n',weights)
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=cfg.solver.batch_size,
@@ -46,10 +50,10 @@ def get_dataloaders(cfg):
 
     test_loader = torch.utils.data.DataLoader(
         test_dataset,
-        batch_size=cfg.solver.batch_size,
+        batch_size=len(test_dataset),
         shuffle=False,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,
     )
 
-    return train_loader, val_loader, test_loader
+    return train_loader, val_loader, test_loader, weights

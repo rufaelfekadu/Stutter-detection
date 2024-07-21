@@ -1,23 +1,30 @@
 import os
 import torch
-from utils import AverageMeter, LossMeter, weighted_accuracy, EER, f1_score_, f1_score_per_class
+from utils import AverageMeter, LossMeter, weighted_accuracy, EER, f1_score_, f1_score_per_class, multilabel_EER
 from tqdm import tqdm
+
 from data import get_dataloaders
 from models import build_model
+from loss import build_loss, CCCLoss
+from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+import numpy as np
+
 
 metric_bank={
     'acc': lambda pred, y: (torch.argmax(pred, dim=1) == y).sum().item() / y.size(0),
-    'f1': f1_score_,
+    'f1': f1_score_per_class,
+    'f1_macro': f1_score_,
     'wacc': weighted_accuracy,
-    'eer': EER
+    'eer': multilabel_EER
 }
 
 class BaseTrainer(object):
 
-    def __init__(self, criterion, device, logger=None):
+    def __init__(self, device, logger=None):
         self.model = None
         self.optimizer = None
-        self.criterion = criterion
+        self.criterion = None
+        self.scheduler = None
         self.device = device
         self.logger = logger
         self.train_meters = {}
@@ -40,37 +47,31 @@ class BaseTrainer(object):
     
 class Trainer(BaseTrainer):
 
-    def __init__(self, cfg, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
-        super(Trainer, self).__init__(criterion, cfg.solver.device, logger)
+    def __init__(self, cfg, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
+        super(Trainer, self).__init__(cfg.solver.device, logger)
 
         self.cfg = cfg
-        self.tasks = list(self.criterion.keys())
+        self.tasks = cfg.tasks
 
         self.metrics = metrics
         for metric in self.metrics:
             setattr(self, metric, metric_bank[metric])
 
         self._init_meters()
-        self.train_loader, self.val_loader, self.test_loader = get_dataloaders(cfg)
-
+        self.train_loader, self.val_loader, self.test_loader, weights = get_dataloaders(cfg)
+        cfg.loss.weights = weights
+        cfg.freeze()
         # build model
-        self.model = build_model(cfg).to(self.device)
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=cfg.solver.lr)
-        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', factor=0.5, patience=2, verbose=True)
-        # self.scheduler = torch.optim.lr_scheduler.MultiStepLR(self.optimizer, milestones=[34, 58, 72], gamma=0.4)
-        # self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=40, eta_min=0)
-        # self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=cfg.solver.lr_step, gamma=cfg.solver.lr_decay)
+        self.model, self.optimizer, self.scheduler = build_model(cfg)
+        self.model = self.model.to(self.device)
+        self.criterion = build_loss(cfg)
 
-        # init best val loss for early stoping
         self.best_val_loss = float('inf')
         self.patience = cfg.solver.es_patience
         
         # if torch.cuda.device_count() > 1:
         #     print("Using", torch.cuda.device_count(), "GPUs")
         #     self.model = torch.nn.DataParallel(self.model)
-        
-        # makedir for saving checkpoints
-        os.makedirs(cfg.output.save_dir, exist_ok=True)
 
     def _init_meters(self):
         for key in self.tasks:
@@ -81,6 +82,8 @@ class Trainer(BaseTrainer):
                 self.test_meters[f'{key}_val_{metric}'] = AverageMeter(name=f'{key}_val_{metric}', writer=self.logger)
                 self.test_meters[f'{key}_train_{metric}'] = AverageMeter(name=f'{key}_train_{metric}', writer=self.logger)
 
+        self.val_meters['lr'] = LossMeter(name='lr', writer=self.logger)
+
     def _reset_meters(self, meters):
         for meter in meters.values():
             meter.reset()
@@ -89,28 +92,22 @@ class Trainer(BaseTrainer):
         for meter in meters.values():
             meter.write()
     
-    def _update_meters(self, meters, val):
-        if not isinstance(val, list):
-            val = [val]
-        for key, value in zip(self.tasks, val):
-            meters[f'{key}_{self.stage}_loss'].update(value)
+    def _update_meter(self, meters, key, val):
+        if key in meters:
+            meters[key].update(val)
 
     def train(self):
         self.stage = 'train'
         for epoch in range(self.cfg.solver.epochs):
             self.model.train()
             self._reset_meters(self.train_meters)
-
             tq_obj = tqdm(self.train_loader, desc=f'Epoch {epoch}', leave=False)
             for batch in tq_obj:
+                self.optimizer.zero_grad()
                 losses = self.forward_backward(batch)
-                if not isinstance(losses, tuple):
-                    losses = [losses]
-                for key, loss in zip(self.tasks, losses):
-                    self.train_meters[f'{key}_train_loss'].update(loss)
+                for key, loss in losses.items():
+                    self._update_meter(self.train_meters, f'{key}_train_loss', loss)
                     tq_obj.set_postfix({ key: loss })
-
-            
 
             self._write_meters(self.train_meters)
 
@@ -141,14 +138,21 @@ class Trainer(BaseTrainer):
         self._reset_meters(self.val_meters)
 
         with torch.no_grad():
+            total_loss = 0
             for batch in self.val_loader:
                 _, losses, _ = self.model_inference(batch)
-                if not isinstance(losses, tuple):
-                    losses = [losses]
-                for key, loss in zip(tasks, losses):
-                    self.val_meters[f'{key}_val_loss'].update(loss)
 
-            self.scheduler.step(self.val_meters[f'{key}_val_loss'].avg)
+                total_loss += sum(losses.values())
+                for key, loss in losses.items():
+                    self._update_meter(self.val_meters, f'{key}_val_loss', loss)
+
+            # log the learning rate
+            self.val_meters['lr'].update(self.scheduler.get_last_lr()[0])
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(total_loss/len(self.val_loader))
+            else:
+                self.scheduler.step()
+            # self.scheduler.step(self.val_meters[f'{key}_val_loss'].avg)
             # self.scheduler.step(self.epoch)
 
             self._write_meters(self.val_meters)
@@ -169,21 +173,25 @@ class Trainer(BaseTrainer):
     def test(self, loader=None, name='test'):
         loader = loader or self.test_loader
         self.stage = 'test'
-        tasks = self.tasks
         self.model.eval()
         self._reset_meters(self.test_meters)
 
         with torch.no_grad():
+            
             for batch in loader:
                 _, _, metrics = self.model_inference(batch)
-                if not isinstance(metrics, tuple):
-                    metrics = [metrics]
-                for key_task, metric in zip(tasks, metrics):
+                
+                for key_task, metric in metrics.items():
                     for key_metric, val in metric.items():
-                        self.test_meters[f'{key_task}_{name}_{key_metric}'].update(val)
-                    
-        self._write_meters(self.test_meters)
+                        self._update_meter(self.test_meters, f'{key_task}_{name}_{key_metric}', val)
+                
 
+        self._write_meters(self.test_meters)
+        self.after_test()
+        
+    def after_test(self):
+        pass
+    
     def save_model(self, path):
         path = os.path.join(self.cfg.output.checkpoint_dir, path)
         torch.save(self.model.state_dict(), path)
@@ -199,7 +207,9 @@ class Trainer(BaseTrainer):
         return vals
     
     def parse_batch_train(self, batch):
-        raise NotImplementedError
+        x = batch['mel_spec']
+        y = batch['label']
+        return x.to(self.device), y.to(self.device)
     
     def parse_batch_test(self, batch):
         raise NotImplementedError
@@ -212,58 +222,95 @@ class Trainer(BaseTrainer):
     
 class MTLTrainer(Trainer):
 
-    def __init__(self, cfg, model, optimizer, criterion, logger=None, metrics=['acc']):
-        super(MTLTrainer, self).__init__(cfg, model, optimizer, criterion, logger, metrics = metrics)
-        assert len(self.tasks) > 1, 'Specify more than 1 task for MTL'
+    def __init__(self, cfg, logger=None, metrics=['acc']):
+        super(MTLTrainer, self).__init__(cfg, logger, metrics = metrics)
+        # assert len(self.tasks) > 1, 'Specify more than 1 task for MTL'
+
+        self.num_classes = cfg.model.output_size
+        self.test_preds = []
+        self.test_labels = []
         
     def forward_backward(self, batch):
-        device = self.device
-        tasks = self.tasks
-        loss_t1, loss_t2 = self.criterion['t1'], self.criterion['t2']
-        x, y_t1, y_t2, y = batch
-        x, y_t1, y_t2, y = x.to(device), y_t1.to(device), y_t2.to(device), y.to(device)
+        x, y = self.parse_batch_train(batch)
 
-        self.optimizer.zero_grad()
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
 
-        if 't1' in tasks:
-            loss1 = loss_t1(pred_t1, y_t1)
+        if 't1' in self.tasks:
+            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            loss1 = self.criterion['t1'](pred_t1, y_t1)
             
-        if 't2' in tasks:
-            loss2 = loss_t2(pred_t2, y_t2)
+        if 't2' in self.tasks:
+            if  not isinstance(self.criterion['t2'], CCCLoss):
+                y_t2 = (y>=2).float()
+            loss2 = self.criterion['t2'](pred_t2, y_t2)
 
         loss = loss1 + loss2
 
         loss.backward()
         self.optimizer.step()
-
-        return loss1.item(), loss2.item()
+        return{
+            't1': loss1.item(),
+            't2': loss2.item()
+        }
     
     def model_inference(self, batch):
         tasks = self.tasks
-        X, y_t1, y_t2, _ = batch
-        X, y_t1, y_t2 = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device)
+        X, y = self.parse_batch_train(batch)
         pred_t1, pred_t2 = self.model(X, tasks=tasks)
-        loss1, loss2 = torch.tensor(0), torch.tensor(0)
 
+        self.test_preds.append(pred_t2)
+        
+
+        loss1, loss2 = torch.tensor(0), torch.tensor(0)
+        metrics_1, metrics_2 = {}, {}
         if 't1' in tasks:
+            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            self.test_labels.append(y_t1)
             loss1 = self.criterion['t1'](pred_t1, y_t1)
             if self.stage == 'test':
                 metrics_1 = self.compute_metrics(pred_t1, y_t1)
             
         if 't2' in tasks:
+            if  not isinstance(self.criterion['t2'], CCCLoss):
+                y_t2 = (y>=2).float()
+                self.test_labels.append(y_t2)
             loss2 = self.criterion['t2'](pred_t2, y_t2)
             if self.stage == 'test':
-                metrics_2 = self.compute_metrics(pred_t2, y_t2)
-        
-        return (pred_t1, pred_t2), (loss1.item(), loss2.item()), (metrics_1, metrics_2)
+                metrics_2 = self.compute_metrics(pred_t2, (y>=2).float())
+                
 
+        losses = {
+            't1': loss1.item(),
+            't2': loss2.item()
+        }
+        metrics = {
+            't1': metrics_1,
+            't2': metrics_2
+        }
+        predictions = {
+            't1': pred_t1,
+            't2': pred_t2
+        }
+        
+        return predictions, losses, metrics
+
+    def after_test(self):
+        preds = np.concatenate(self.test_preds, axis=0)
+        num_classes = self.cfg.model.output_size
+        for i in range(num_classes):
+            cm = confusion_matrix((self.test_loader.dataset.label>=2).float()[:,i], preds[:,i])
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+            # log the confusion matrix
+            self.logger.add_figure(f'confusion_matrix_{i}', disp.plot(), self.epoch)
+
+        
 class STLTrainer(Trainer):
     
-    def __init__(self, cfg, criterion, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
-        super(STLTrainer, self).__init__(cfg, criterion, logger, metrics)
+    def __init__(self, cfg, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
+        super(STLTrainer, self).__init__(cfg, logger, metrics)
 
+        self.num_classes = cfg.model.output_size
         if isinstance(self.criterion, dict):
             self.tasks = list(self.criterion.keys())
             self.task = self.tasks[0]
@@ -276,24 +323,20 @@ class STLTrainer(Trainer):
     
     def parse_batch_train(self, batch):
         x = batch['mel_spec']
-        y = batch['label_per_type']
-        y_t1 = batch['label_fluent']
-        y_t2 = batch['label_ccc']
-        return x.to(self.device), y.to(self.device), y_t1.to(self.device), y_t2.to(self.device) 
-    
-    def parse_batch_test(self, batch):
-        x = batch['mel_spec']
-        y = batch['label_per_type']
+        y = batch['label']
         return x.to(self.device), y.to(self.device)
     
+    
     def forward_backward(self, batch):
-        x, y, y_t1, y_t2 = self.parse_batch_train(batch)
-        self.optimizer.zero_grad()
+        x, y= self.parse_batch_train(batch)
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
 
         if self.task == 't1':
-            loss = self.criterion(pred_t1, y_t1)
+            y = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            pred_t1 = torch.argmax(pred_t1, dim=1)
+            loss = self.criterion(pred_t1, y)
         elif self.task == 't2':
+            y = (y>=2).float()
             loss = self.criterion(pred_t2, y)
         else:
             raise ValueError('Task not found')
@@ -304,18 +347,30 @@ class STLTrainer(Trainer):
         return loss.item()
     
     def model_inference(self, batch):
-        # X, y_t1, y_t2, y = batch
-        # X, y_t1, y_t2, y = X.to(self.device), y_t1.to(self.device), y_t2.to(self.device), y.to(self.device)
-        X, y, y_t1, y_t2 = self.parse_batch_train(batch)
+
+        X, y, = self.parse_batch_train(batch)
+        
         pred_t1, pred_t2 = self.model(X, tasks=self.tasks)
         metrics = {}
         if self.task == 't1':
-            loss = self.criterion(pred_t1, y_t1)
+            y = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            loss = self.criterion(pred_t1, y)
             if self.stage == 'test':
-                metrics = self.compute_metrics(pred_t1, y_t1)
+                metrics = self.compute_metrics(pred_t1, y)
         else:
+            y = (y>=2).float()
             loss = self.criterion(pred_t2, y)
             if self.stage == 'test':
-                metrics = self.compute_metrics(pred_t2, y_t2)
+                metrics = self.compute_metrics(pred_t2, y)
 
         return   (pred_t1, pred_t2), loss.item(), metrics        
+
+
+trainer_registery = {
+    'stl': STLTrainer,
+    'mtl': MTLTrainer
+}
+
+def build_trainer(cfg, logger=None, metrics=['f1']):
+    trainer = trainer_registery[cfg.setting](cfg, logger, metrics)
+    return trainer

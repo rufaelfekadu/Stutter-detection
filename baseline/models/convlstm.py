@@ -97,7 +97,7 @@ class ConvLSTM(nn.Module):
 
         x = x.unsqueeze(1)
         x = self.conv_module(x)
-
+        
         b_size, _, _, seq_len = x.shape
         x = x.view(b_size, seq_len, -1)
         x = self.FCN(x)
@@ -121,7 +121,9 @@ if __name__ == '__main__':
         'emb_dim': 64,
         'hidden_size': 64,
         'num_layers': 1,
-        'num_classes': 6
+        'num_classes': 6,
+        'output_size': 6,
+        'dropout': 0.5
     }
     model = ConvLSTM(**kwargs)
     print(model)

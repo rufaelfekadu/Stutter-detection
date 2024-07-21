@@ -2,7 +2,7 @@
 
 # model
 model:
-  name: 'lstm'
+  name: 'lstmext'
   hidden_size: 64
   num_layers: 2
   dropout: 0.3
@@ -12,7 +12,7 @@ solver:
   num_workers: 8
   batch_size: 128
   epochs: 300
-  lr: 0.01
+  lr: 0.05
   es_patience: 200
   device: 'cuda'
   scheduler: 'none'

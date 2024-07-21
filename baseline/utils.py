@@ -1,11 +1,14 @@
 
 import torch
+import torchaudio
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import f1_score, accuracy_score, roc_curve, balanced_accuracy_score
+from sklearn.metrics import f1_score, accuracy_score, roc_curve, balanced_accuracy_score, multilabel_confusion_matrix
 from sklearn.preprocessing import label_binarize
 import numpy as np
 import os
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class AverageMeter(object):
     def __init__(self, name=None, writer=None):
@@ -92,159 +95,82 @@ class LossMeter(object):
                 except Exception as e:
                     print(e)
 
-class CrossEntropyLoss(nn.Module):
-    def __init__(self):
-        super(CrossEntropyLoss, self).__init__()
+def EER(predictions, labels):
 
-    def forward(self, y_pred, y_true):
-        y_pred = F.softmax(y_pred, dim=1)
-        # y_pred = torch.argmax(y_pred, dim=1)
-        loss = F.cross_entropy(y_pred, y_true)
-        return loss
+    if  isinstance(predictions, torch.Tensor):
+        predictions = (torch.sigmoid(predictions)>0.5).float()
+        predictions, labels = predictions.cpu().numpy(), labels.cpu().numpy()
 
-class CrossEntropyLossWithReg(nn.Module):
-    def __init__(self, model, reg_coeff=0.01):
-        super(CrossEntropyLossWithReg, self).__init__()
-        self.model = model
-        self.reg_coeff = reg_coeff
+    fpr, tpr, thresholds = roc_curve(labels, predictions)
+    fnr = 1 - tpr
+    eer_threshold = thresholds[np.nanargmin(np.absolute(fnr - fpr))]
+    eer = fpr[np.nanargmin(np.absolute(fnr - fpr))]
 
-    def forward(self, y_pred, y_true):
-        # Calculate the standard cross-entropy loss
-        loss = F.cross_entropy(y_pred, y_true)
-        
-        # Calculate L2 regularization (weight decay)
-        l2_reg = torch.tensor(0.).to(y_pred.device)
-        for param in self.model.parameters():
-            l2_reg += torch.norm(param)**2
-        
-        # Add the regularization term to the loss
-        loss += self.reg_coeff * l2_reg
-        return loss
+    return eer, eer_threshold
 
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=0.55, gamma=2.0, reduction='mean'):
-        """
-        Initializes the Focal Loss.
+def multilabel_EER(predictions, labels):
 
-        Parameters:
-        - alpha (float): Weighting factor for the rare class.
-        - gamma (float): Modulating factor to focus on hard examples.
-        - reduction (str): Specifies the reduction to apply to the output: 'none' | 'mean' | 'sum'.
-        """
-        super(FocalLoss, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.reduction = reduction
+    predictions = (torch.sigmoid(predictions) > 0.5).float()
+    predictions, labels = predictions.cpu().numpy(), labels.cpu().numpy()
 
-    def forward(self, inputs, targets):
-        """
-        Compute the focal loss.
-
-        Parameters:
-        - inputs (tensor): Predictions from the model, expected to be logits.
-        - targets (tensor): Ground truth labels, with the same shape as inputs.
-        """
-        # apply softmax to the inputs
-        inputs = F.softmax(inputs, dim=1)
-        BCE_loss = F.cross_entropy(inputs, targets, reduction='none')
-        pt = torch.exp(-BCE_loss)  # Prevents nans when probability 0
-        F_loss = self.alpha * (1-pt)**self.gamma * BCE_loss
-
-        if self.reduction == 'mean':
-            return torch.mean(F_loss)
-        elif self.reduction == 'sum':
-            return torch.sum(F_loss)
-        else:
-            return F_loss
-        
-
-
-class FocalLossMultiClass(nn.Module):
-    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
-        """
-        Initializes the Focal Loss for multi-class classification.
-
-        Parameters:
-        - alpha (tensor): Weighting factor for each class, shape (num_classes,).
-        - gamma (float): Modulating factor to focus on hard examples.
-        - reduction (str): Specifies the reduction to apply to the output: 'none' | 'mean' | 'sum'.
-        """
-        super(FocalLossMultiClass, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.reduction = reduction
-
-    def forward(self, inputs, targets):
-        """
-        Compute the focal loss for multi-class classification.
-
-        Parameters:
-        - inputs (tensor): Predictions from the model, expected to be logits with shape (batch_size, num_classes).
-        - targets (tensor): Ground truth labels, with shape (batch_size,) where each value is 0 <= targets[i] <= num_classes-1.
-        """
-        # Convert inputs to probabilities
-        probs = F.softmax(inputs, dim=1)
-        targets_one_hot = F.one_hot(targets, num_classes=probs.shape[1]).float()
-
-        # Calculate the cross entropy loss
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
-        pt = torch.sum(targets_one_hot * probs, dim=1)
-
-        # Calculate the focal loss
-        alpha_factor = self.alpha[targets] if self.alpha is not None else 1.0
-        focal_loss = alpha_factor * ((1 - pt) ** self.gamma) * ce_loss
-
-        if self.reduction == 'mean':
-            return torch.mean(focal_loss)
-        elif self.reduction == 'sum':
-            return torch.sum(focal_loss)
-        else:
-            return focal_loss
-        
-class CCCLoss(nn.Module):
-    def __init__(self):
-        super(CCCLoss, self).__init__()
-
-    def forward(self, y_pred, y_true):
-        y_true_mean = torch.mean(y_true, dim=1, keepdim=True)
-        y_pred_mean = torch.mean(y_pred, dim=1, keepdim=True)
-        
-        y_true_var = torch.var(y_true, dim=1, unbiased=False)
-        y_pred_var = torch.var(y_pred, dim=1, unbiased=False)
-        
-        covariance = torch.mean((y_true - y_true_mean) * (y_pred - y_pred_mean), dim=1)
-        
-        ccc = (2 * covariance) / (y_true_var + y_pred_var + (y_true_mean - y_pred_mean).squeeze() ** 2)
-        
-        ccc_loss = 1 - ccc.mean()
-
-        return ccc_loss
-
-
-def weighted_accuracy(y_pred, y_true):
-    y_pred = torch.argmax(y_pred, dim=1)
-    return balanced_accuracy_score(y_true.cpu().numpy(), y_pred.cpu().numpy())
-
-def EER(y_pred, y_true):
-
-    y_true = y_true.cpu().numpy()
-    y_pred = y_pred.cpu().numpy()
-    n_classes = y_pred.shape[1]
-    y_true_binarized = label_binarize(y_true, classes=range(n_classes))
+    n_labels = predictions.shape[1]
     eers = []
-
-    for i in range(n_classes):
-        fpr, tpr, thresholds = roc_curve(y_true_binarized[:, i], y_pred[:, i])
-        fnr = 1 - tpr
-        eer_threshold = thresholds[np.nanargmin(np.absolute((fnr - fpr)))]
-        eer = fpr[np.nanargmin(np.absolute((fnr - fpr)))]
+    
+    for i in range(n_labels):
+        eer, eer_threshold = EER(labels[:, i], predictions[:, i])
         eers.append(eer)
+    
+    overall_eer = np.mean(eers)
+    return overall_eer
 
-    average_eer = np.mean(eers)
-    return average_eer
+def weighted_accuracy(predictions, labels):
+
+    predictions = (torch.sigmoid(predictions) > 0.5).float()
+    predictions, labels = predictions.cpu().numpy(), labels.cpu().numpy()
+
+    cm = multilabel_confusion_matrix(labels, predictions)
+    
+    accuracies = []
+    supports = []
+    
+    for i in range(cm.shape[0]):
+        tn, fp, fn, tp = cm[i].ravel()
+        
+        # Accuracy for label i
+        accuracy_i = (tp + tn) / (tp + tn + fp + fn)
+        accuracies.append(accuracy_i)
+        
+        # Support for label i
+        support_i = tp + fn
+        supports.append(support_i)
+   
+    # Compute weighted accuracy
+    weighted_accuracy = np.average(accuracies, weights=supports)
+    
+    return weighted_accuracy
+
+# def EER(y_pred, y_true):
+
+#     y_true = y_true.cpu().numpy()
+#     y_pred = y_pred.cpu().numpy()
+#     n_classes = y_pred.shape[1]
+#     y_true_binarized = label_binarize(y_true, classes=range(n_classes))
+#     eers = []
+
+#     for i in range(n_classes):
+#         fpr, tpr, thresholds = roc_curve(y_true_binarized[:, i], y_pred[:, i])
+#         fnr = 1 - tpr
+#         eer_threshold = thresholds[np.nanargmin(np.absolute((fnr - fpr)))]
+#         eer = fpr[np.nanargmin(np.absolute((fnr - fpr)))]
+#         eers.append(eer)
+
+#     average_eer = np.mean(eers)
+#     return average_eer
 
 def f1_score_(predictions, labels):
-    predictions = torch.argmax(predictions, dim=1)
+    # predictions = torch.argmax(predictions, dim=1)
+    predictions = torch.sigmoid(predictions)
+    predictions = (predictions > 0.5).float()
     f1 = f1_score(predictions.cpu().numpy(), labels.cpu().numpy(), average='macro')
     return f1
 
@@ -257,7 +183,11 @@ def f1_score_per_class(predictions, labels):
     for i in range(num_classes):
         pred = predictions[:, i]
         label = labels[:, i]
-        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy()), average='macro')    
+        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy(), average='macro'))    
+    # append any class
+    predictions_any =  (torch.sum(predictions[:, :num_classes-1], dim=1) >0 ).int()
+    labels_any = (torch.sum(labels[:, :num_classes-1], dim=1) >0).int()
+    f1.append(f1_score(predictions_any.cpu().numpy(), labels_any.cpu().numpy(), average='macro'))
     return f1
 
 
@@ -273,10 +203,12 @@ def set_seed(seed):
     
 def setup_exp(cfg):
 
+    cfg.output.save_dir = os.path.join(cfg.output.save_dir, cfg.data.name)
     cfg.data.ckpt = os.path.join(cfg.output.save_dir, cfg.data.ckpt)
+
+    cfg.output.save_dir = os.path.join(cfg.output.save_dir, cfg.model.name)
     cfg.output.log_dir = os.path.join(cfg.output.save_dir, cfg.output.log_dir)
     cfg.output.checkpoint_dir = os.path.join(cfg.output.save_dir, cfg.output.checkpoint_dir)
-    cfg.freeze()
     
     # make directories
     os.makedirs(cfg.output.save_dir, exist_ok=True)
@@ -286,3 +218,36 @@ def setup_exp(cfg):
 
     # set seed
     set_seed(cfg.seed)
+
+
+def _load_audio_file(row):
+    audio_path = row['file_path']
+    try:
+        waveform, sample_rate = torchaudio.load(audio_path, format='wav')
+        mel_spec = torchaudio.transforms.MelSpectrogram(win_length=400, hop_length=160, n_mels=40)(waveform)
+        # pad the mel_spec to have the same length
+        if mel_spec.shape[-1] < 301:
+            print(f'Padding {audio_path}')
+            mel_spec = torch.cat([mel_spec, torch.zeros(1,40, 301 - mel_spec.shape[-1])], dim=2)
+            # mel_spec = None
+        return (row.name, mel_spec)  # Return the index and the mel_spec
+    except Exception as e:
+        print(f"Error loading file {audio_path}: {e}")
+        return (row.name, None)
+
+def load_audio_files(df):
+    mel_specs = [None] * len(df)  # Preallocate list with None
+    failed = []
+    with ThreadPoolExecutor() as executor:
+        # Submit all tasks and get future objects
+        futures = [executor.submit(_load_audio_file, row) for _, row in df.iterrows()]
+        for future in tqdm(as_completed(futures)):
+            index, mel_spec = future.result()
+            
+            if mel_spec is not None:
+                mel_specs[index] = mel_spec.squeeze(0)  # Place mel_spec at its original index
+            else:
+                failed.append(index)
+    # Filter out None values in case of errors
+    mel_specs = [spec for spec in mel_specs if spec is not None]
+    return mel_specs, failed
