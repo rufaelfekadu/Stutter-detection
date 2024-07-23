@@ -1,13 +1,15 @@
 import os
 import torch
-from utils import AverageMeter, LossMeter, weighted_accuracy, EER, f1_score_, f1_score_per_class, multilabel_EER
-from tqdm import tqdm
-
-from data import get_dataloaders
-from models import build_model
-from loss import build_loss, CCCLoss
 from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 import numpy as np
+from tqdm import tqdm
+
+from stutter.data import get_dataloaders
+from stutter.models import build_model
+from stutter.utils.meters import LossMeter, AverageMeter
+from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER
+from stutter.utils.loss import build_loss, CCCLoss
+
 
 
 metric_bank={
@@ -59,8 +61,9 @@ class Trainer(BaseTrainer):
 
         self._init_meters()
         self.train_loader, self.val_loader, self.test_loader, weights = get_dataloaders(cfg)
-        cfg.loss.weights = weights
+        # cfg.loss.weights = weights
         cfg.freeze()
+
         # build model
         self.model, self.optimizer, self.scheduler = build_model(cfg)
         self.model = self.model.to(self.device)
@@ -68,7 +71,7 @@ class Trainer(BaseTrainer):
 
         self.best_val_loss = float('inf')
         self.patience = cfg.solver.es_patience
-        
+        print(self.model)
         # if torch.cuda.device_count() > 1:
         #     print("Using", torch.cuda.device_count(), "GPUs")
         #     self.model = torch.nn.DataParallel(self.model)
@@ -104,7 +107,7 @@ class Trainer(BaseTrainer):
             tq_obj = tqdm(self.train_loader, desc=f'Epoch {epoch}', leave=False)
             for batch in tq_obj:
                 self.optimizer.zero_grad()
-                losses = self.forward_backward(batch)
+                losses = self.train_step(batch)
                 for key, loss in losses.items():
                     self._update_meter(self.train_meters, f'{key}_train_loss', loss)
                     tq_obj.set_postfix({ key: loss })
@@ -117,19 +120,6 @@ class Trainer(BaseTrainer):
                 break
 
             self.epoch += 1
-
-    def _inference(self, batch):
-        _,y = self.parse_batch_test(batch)
-        preds =  self.model_inference(batch)
-
-        if self.stage == 'val':
-            losses = self.criterion(preds, y)
-            self._update_meters(self.val_meters, losses)
-
-        elif self.stage == 'test':
-            metrics = self.compute_metrics(preds, y)
-
-        return preds, losses, metrics
     
     def validate(self):
         self.stage = 'val'
@@ -140,8 +130,7 @@ class Trainer(BaseTrainer):
         with torch.no_grad():
             total_loss = 0
             for batch in self.val_loader:
-                _, losses, _ = self.model_inference(batch)
-
+                losses = self.val_step(batch)
                 total_loss += sum(losses.values())
                 for key, loss in losses.items():
                     self._update_meter(self.val_meters, f'{key}_val_loss', loss)
@@ -179,7 +168,7 @@ class Trainer(BaseTrainer):
         with torch.no_grad():
             
             for batch in loader:
-                _, _, metrics = self.model_inference(batch)
+                metrics = self.test_step(batch)
                 
                 for key_task, metric in metrics.items():
                     for key_metric, val in metric.items():
@@ -207,17 +196,24 @@ class Trainer(BaseTrainer):
         return vals
     
     def parse_batch_train(self, batch):
-        x = batch['mel_spec']
+        x = torch.cat([batch['mel_spec'], batch['f0']], dim=1)
+        # x = batch['mel_spec']
         y = batch['label']
         return x.to(self.device), y.to(self.device)
     
     def parse_batch_test(self, batch):
         raise NotImplementedError
     
-    def forward_backward(self, x, y):
+    def train_step(self, x, y):
         raise NotImplementedError
     
-    def model_inference(self, x):
+    def val_step(self, x):
+        raise NotImplementedError
+    
+    def test_step(self, x):
+        raise NotImplementedError
+    
+    def inference(self, x):
         raise NotImplementedError
     
 class MTLTrainer(Trainer):
@@ -230,9 +226,9 @@ class MTLTrainer(Trainer):
         self.test_preds = []
         self.test_labels = []
         
-    def forward_backward(self, batch):
-        x, y = self.parse_batch_train(batch)
+    def train_step(self, batch):
 
+        x, y = self.parse_batch_train(batch)
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
 
@@ -245,129 +241,71 @@ class MTLTrainer(Trainer):
                 y_t2 = (y>=2).float()
             loss2 = self.criterion['t2'](pred_t2, y_t2)
 
-        loss = loss1 + loss2
+        loss = loss2
 
         loss.backward()
         self.optimizer.step()
+
         return{
             't1': loss1.item(),
             't2': loss2.item()
         }
     
-    def model_inference(self, batch):
-        tasks = self.tasks
-        X, y = self.parse_batch_train(batch)
-        pred_t1, pred_t2 = self.model(X, tasks=tasks)
-
-        self.test_preds.append(pred_t2)
-        
-
+    def val_step(self, batch):
+        x, y = self.parse_batch_train(batch)
+        pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
-        metrics_1, metrics_2 = {}, {}
-        if 't1' in tasks:
+        if 't1' in self.tasks:
             y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
-            self.test_labels.append(y_t1)
             loss1 = self.criterion['t1'](pred_t1, y_t1)
-            if self.stage == 'test':
-                metrics_1 = self.compute_metrics(pred_t1, y_t1)
-            
-        if 't2' in tasks:
+        if 't2' in self.tasks:
             if  not isinstance(self.criterion['t2'], CCCLoss):
                 y_t2 = (y>=2).float()
-                self.test_labels.append(y_t2)
             loss2 = self.criterion['t2'](pred_t2, y_t2)
-            if self.stage == 'test':
-                metrics_2 = self.compute_metrics(pred_t2, (y>=2).float())
-                
-
-        losses = {
+        return{
             't1': loss1.item(),
             't2': loss2.item()
         }
-        metrics = {
+    
+    def test_step(self, batch):
+        x, y = self.parse_batch_train(batch)
+        pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
+        metrics_1, metrics_2 = {}, {}
+        if 't1' in self.tasks:
+            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            pred_t1 = torch.argmax(pred_t1, dim=1)
+            metrics_1 = self.compute_metrics(pred_t1, y_t1)
+        if 't2' in self.tasks:
+            y_t2 = (y>=2).int()
+            pred_t2 = (torch.sigmoid(pred_t2)>=0.5).int()
+            metrics_2 = self.compute_metrics(pred_t2, y_t2)
+            self.test_preds.append(pred_t2.cpu().numpy())
+            self.test_labels.append(y_t2.cpu().numpy())
+        return {
             't1': metrics_1,
             't2': metrics_2
         }
-        predictions = {
+    
+    def inference(self, batch):
+        tasks = self.tasks
+        X, y = self.parse_batch_train(batch)
+        pred_t1, pred_t2 = self.model(X, tasks=tasks)
+        return {
             't1': pred_t1,
             't2': pred_t2
         }
-        
-        return predictions, losses, metrics
 
-    def after_test(self):
-        preds = np.concatenate(self.test_preds, axis=0)
-        num_classes = self.cfg.model.output_size
-        for i in range(num_classes):
-            cm = confusion_matrix((self.test_loader.dataset.label>=2).float()[:,i], preds[:,i])
-            disp = ConfusionMatrixDisplay(confusion_matrix=cm)
-            # log the confusion matrix
-            self.logger.add_figure(f'confusion_matrix_{i}', disp.plot(), self.epoch)
-
-        
-class STLTrainer(Trainer):
-    
-    def __init__(self, cfg, logger=None, metrics=['acc', 'f1', 'wacc', 'eer']):
-        super(STLTrainer, self).__init__(cfg, logger, metrics)
-
-        self.num_classes = cfg.model.output_size
-        if isinstance(self.criterion, dict):
-            self.tasks = list(self.criterion.keys())
-            self.task = self.tasks[0]
-        else:
-            raise ValueError('Criterion should be a dictionary specify task type as key and loss function as value')
-        
-        assert len(self.tasks) == 1, 'Number of tasks should be 1 for STL'
-
-        self.criterion = self.criterion[self.tasks[0]]
-    
-    def parse_batch_train(self, batch):
-        x = batch['mel_spec']
-        y = batch['label']
-        return x.to(self.device), y.to(self.device)
-    
-    
-    def forward_backward(self, batch):
-        x, y= self.parse_batch_train(batch)
-        pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
-
-        if self.task == 't1':
-            y = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
-            pred_t1 = torch.argmax(pred_t1, dim=1)
-            loss = self.criterion(pred_t1, y)
-        elif self.task == 't2':
-            y = (y>=2).float()
-            loss = self.criterion(pred_t2, y)
-        else:
-            raise ValueError('Task not found')
-        
-        loss.backward()
-        self.optimizer.step()
-
-        return loss.item()
-    
-    def model_inference(self, batch):
-
-        X, y, = self.parse_batch_train(batch)
-        
-        pred_t1, pred_t2 = self.model(X, tasks=self.tasks)
-        metrics = {}
-        if self.task == 't1':
-            y = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
-            loss = self.criterion(pred_t1, y)
-            if self.stage == 'test':
-                metrics = self.compute_metrics(pred_t1, y)
-        else:
-            y = (y>=2).float()
-            loss = self.criterion(pred_t2, y)
-            if self.stage == 'test':
-                metrics = self.compute_metrics(pred_t2, y)
-
-        return   (pred_t1, pred_t2), loss.item(), metrics        
-
+    # def after_test(self):
+    #     preds = np.concatenate(self.test_preds, axis=0)
+    #     labels = np.concatenate(self.test_labels, axis=0)
+    #     num_classes = self.cfg.model.output_size
+    #     for i in range(num_classes):
+    #         cm = confusion_matrix(labels[:,i], preds[:,i])
+    #         disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
+    #         # log the confusion matrix
+    #         self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
 
 trainer_registery = {
-    'stl': STLTrainer,
     'mtl': MTLTrainer
 }
 

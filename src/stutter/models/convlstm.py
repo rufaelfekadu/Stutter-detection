@@ -13,7 +13,7 @@ class ConvBlock(nn.Module):
         in_channels = [in_channel] + out_channels[:-1]
 
         for i, (in_channel, out_channel) in enumerate(zip(in_channels, out_channels)):
-            stride = 2 if i == 0 else 1
+            stride = 2 if i == len(in_channels)-1 else 1
             setattr(self, f'conv_{i}', nn.Conv2d(in_channel, out_channel, kernel_size=3, stride=stride, padding=1))
             setattr(self, f'batchnorm_{i}', nn.BatchNorm2d(out_channel))
 
@@ -43,7 +43,7 @@ class ConvolutionalModule(nn.Module):
                                  [128, 128, 128],
                                  [128, 64, 64],
                                  [64, 64, 32],
-                                 [32, 16, 16]], num_blocks=6):
+                                 [32, 16, 16]], num_blocks=6, input_dim=40):
         super(ConvolutionalModule, self).__init__()
         '''
         Convolutional block for the ConvLSTM model as described by https://arxiv.org/pdf/1910.12590
@@ -67,39 +67,43 @@ class ConvolutionalModule(nn.Module):
 
         assert len(out_channels) == num_blocks, 'Number of blocks must match the number of output channels'
 
-        self.input_conv = nn.Conv2d(in_channel, in_conv_channel, kernel_size=7, stride=1, padding=1)
+        # self.input_conv = nn.Conv2d(in_channel, in_conv_channel, kernel_size=7, stride=1, padding=1)
         # construct the resnet blocks
         for i, out_channel in enumerate(out_channels):
-            in_ch = in_conv_channel if i == 0 else out_channels[i-1][-1]
+            in_ch = in_channel if i == 0 else out_channels[i-1][-1]
             setattr(self, f'resnet_{i}', ConvBlock(in_ch, out_channel))
-    
+
+        self.out_dim = input_dim // (2**num_blocks)
+
     def forward(self, x):
 
-        x = self.input_conv(x)
+        # x = self.input_conv(x)
         for i in range(len(self.out_channels)):
             x = getattr(self, f'resnet_{i}')(x)
 
         return x
 
 class ConvLSTM(nn.Module):
-    __acceptable_params__ = ['emb_dim', 'hidden_size', 'num_layers', 'output_size', 'dropout' ]
+    __acceptable_params__ = ['input_dim', 'emb_dim', 'hidden_size', 'num_layers', 'output_size', 'dropout' ]
     def __init__(self, **kwargs):
         super(ConvLSTM, self).__init__()
         [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params__]
 
-        self.conv_module = ConvolutionalModule()
-        self.FCN = nn.Linear(16, self.emb_dim)
+        self.conv_module = ConvolutionalModule(input_dim=self.input_dim)
+        self.FCN = nn.Linear(self.conv_module.out_dim, self.emb_dim)
         self.lstm = nn.LSTM(self.emb_dim, self.hidden_size, self.num_layers, batch_first=True, dropout=self.dropout)
         self.fc2 = nn.Linear(self.hidden_size, self.output_size)
         self.fc1 = nn.Linear(self.hidden_size, 2)
         
     def forward(self, x, tasks=['t1', 't2']):
+        
+        x = x.permute(0, 2, 1)
 
         x = x.unsqueeze(1)
         x = self.conv_module(x)
-        
-        b_size, _, _, seq_len = x.shape
-        x = x.view(b_size, seq_len, -1)
+
+        b, c, t, m  = x.shape
+        x = x.view(b, t, -1)
         x = self.FCN(x)
 
         # Forward pass through LSTM
@@ -118,6 +122,7 @@ class ConvLSTM(nn.Module):
 if __name__ == '__main__':
 
     kwargs = {
+        'input_dim': 40,
         'emb_dim': 64,
         'hidden_size': 64,
         'num_layers': 1,

@@ -32,3 +32,6 @@ Thumbs.db
 tools/
 
 *config.yml
+
+# egg-info
+*.egg-info/

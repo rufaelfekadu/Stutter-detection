@@ -139,16 +139,22 @@ class BCELoss(nn.Module):
     def forward(self, y_pred, y_true):
         loss = F.binary_cross_entropy_with_logits(y_pred, y_true, weight=self.weights.to(y_pred.device))
         return loss
+
+class BCELossWithLogits(nn.BCEWithLogitsLoss):
+    def __init__(self, **kwargs):
+        super(BCELossWithLogits, self).__init__(weight=torch.tensor(kwargs.get('weights', None)))
+    def forward(self, y_pred, y_true):
+        return super().forward(y_pred, y_true)
     
 loss_registery = {
     'ccc': CCCLoss,
     'ce': CrossEntropyLoss,
     'focal': FocalLoss,
-    'bce': BCELoss
+    'bce': BCELossWithLogits
 }
 
 def build_loss(cfg):
     criterion = {}
     for key, loss in zip(cfg.tasks, cfg.solver.losses):
-        criterion[key] = loss_registery[loss](**cfg.loss)
+        criterion[key] = loss_registery[loss](**cfg.loss).to(cfg.solver.device)
     return criterion

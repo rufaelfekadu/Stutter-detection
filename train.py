@@ -1,12 +1,13 @@
-from configs import _C as cfg
 import argparse
 import torch
 import os
 
 
-from trainer import build_trainer
-from utils import  setup_exp
-from logger import TensorboardLogger, CSVLogger, WandbLogger
+from stutter.utils.misc import setup_exp
+from stutter.config import cfg
+from stutter.utils.logger import WandbLogger
+from stutter.trainer import build_trainer
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model')

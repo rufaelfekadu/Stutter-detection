@@ -17,12 +17,14 @@ class LSTMExt(nn.Module):
 
     def forward(self, x: torch.Tensor, tasks=['t1', 't2']):
         
+        x = x.permute(0, 2, 1)
+
         x = self.conv_mel(x)
         x = self.batchnorm(x)
 
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        x = x.permute(0, 2, 1)
+        
 
         out, _ = self.lstm(x, (h0, c0))
         t1_out, t2_out = None, None

@@ -7,15 +7,18 @@ class LSTMModel(nn.Module):
     def __init__(self, **kwargs):
         super(LSTMModel, self).__init__()
         [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params__]
-
+        # self.emb = nn.Linear(self.input_size, self.hidden_size)
         self.lstm = nn.LSTM(self.input_size, self.hidden_size, self.num_layers, batch_first=True, dropout=self.dropout)
         self.fc1 = nn.Linear(self.hidden_size, 2)
         self.fc2 = nn.Linear(self.hidden_size, self.output_size)
 
     def forward(self, x: torch.Tensor, tasks=['t1', 't2']):
+
+        x = x.permute(0, 2, 1)
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
-        x = x.permute(0, 2, 1)
+
+        # x = self.emb(x)
 
         out, _ = self.lstm(x, (h0, c0))
         t1_out, t2_out = None, None

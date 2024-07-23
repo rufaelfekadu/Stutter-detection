@@ -1,18 +1,15 @@
 import torch
 from torch.utils.data import Dataset
+from torchvision.transforms import ToTensor
 import torchaudio
-from torchaudio.transforms import MelSpectrogram
 import pandas as pd
-import numpy as np
 import os
-import sys
-sys.path.append('baseline/')
-from utils import load_audio_files
+from stutter.utils.misc import load_audio_files
 
 
 class FluencyBank(Dataset):
     __acceptable_params = ['root', 'label_path', 'ckpt']
-    def __init__(self, transforms=None, save=True, split='val', **kwargs):
+    def __init__(self, transforms=None, save=True, split='train', **kwargs):
         [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
 
         self.transform = transforms
@@ -21,13 +18,14 @@ class FluencyBank(Dataset):
 
         if os.path.isfile(self.ckpt):
             print("************ Loading Cached Dataset ************")
-            self.data, self.label = torch.load(self.ckpt)
+            self.mel_spec, self.f0, self.label = torch.load(self.ckpt)
          
         else:
             print("************ Loading Dataset ************")
             self._load_data(split=split)
             if save:
-                torch.save((self.data, self.label), self.ckpt)
+                torch.save((self.mel_spec, self.f0, self.label), self.ckpt)
+                # torch.save((self.data, self.label), self.ckpt)
     
     
     def _load_data(self, split='train'):
@@ -40,23 +38,34 @@ class FluencyBank(Dataset):
             unique_clips = df['EpId'].unique()
             print("unique files: ", len(unique_clips))
             # np.random.shuffle(unique_clips) 
-            df['split'] = df['EpId'].apply(lambda x: 'train' if x in unique_clips[:25] else 'val' if x in unique_clips[25:29] else 'test')
+            df['split'] = df['EpId'].apply(lambda x: 'train' if x in unique_clips[:int(0.8*len(unique_clips))] else 'val' if x in unique_clips[int(0.8*len(unique_clips)):int(0.9*len(unique_clips))] else 'test')
             print(df['split'].value_counts())
+        
         df = df[df['split'] == split].reset_index(drop=True)
 
-        self.data, failed = load_audio_files(df)
+        # df = df[df[self.label_columns].apply(lambda x: x>=2).any(axis=1)].reset_index(drop=True)
+
+        self.mel_spec, self.f0, failed = load_audio_files(df)
+
+
+        print(f"Failed to load {len(failed)} files")
         df = df.drop(failed).reset_index(drop=True)
+
+        # to tensor
+        self.mel_spec = torch.tensor(self.mel_spec, dtype=torch.float32)
+        self.f0 = torch.tensor(self.f0, dtype=torch.float32)
         self.label = torch.tensor(df[self.label_columns].values, dtype=torch.float32)
 
         del df
     
     
     def __len__(self):
-        return len(self.data)
+        return len(self.mel_spec)
 
     def __getitem__(self, idx):
         return {
-            'mel_spec': self.data[idx],
+            'mel_spec': self.mel_spec[idx],
+            'f0': self.f0[idx],
             'label': self.label[idx]
         }
         # return self.data[idx], self.label_fluent[idx], self.label_ccc[idx], self.label_per_type[idx]

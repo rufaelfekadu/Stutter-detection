@@ -2,5 +2,5 @@
 data: 
   name: 'fluencybank'
   root: 'datasets/fluencybank/clips'
-  label_path: 'datasets/fluencybank/fluencybank_labels_new.csv'
+  label_path: outputs/fluencybank/fluencybank_labels_new_split.csv
 

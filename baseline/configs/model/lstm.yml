@@ -1,5 +1,3 @@
-
-
 # model
 model:
   name: 'lstm'
@@ -7,19 +5,21 @@ model:
   num_layers: 2
   dropout: 0.3
   output_size: 6
+  input_size: 43
 
 solver:
   num_workers: 8
-  batch_size: 128
+  batch_size: 32
   epochs: 300
-  lr: 0.01
+  lr: 0.001
   es_patience: 200
   device: 'cuda'
   scheduler: 'none'
   factor: 0.5
-  patience: 3
-  min_lr: 0.00225
+  patience: 5
+  min_lr: 0.000225
+  losses: ['bce', 'bce']
 
-loss:
-  weights: [0.96, 0.98, 0.95, 0.94, 0.85, 0.65]
+# loss:
+#   weights: [0.96, 0.98, 0.95, 0.94, 0.85, 0.65]
 

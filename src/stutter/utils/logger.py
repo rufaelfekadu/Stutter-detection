@@ -68,5 +68,5 @@ class WandbLogger(baselogger):
     def close(self):
         pass
 
-    def add_plot(self, name, plot):
+    def add_figure(self, name, plot):
         wandb.log({name: plot})
