@@ -9,7 +9,8 @@ from stutter.models import build_model
 from stutter.utils.meters import LossMeter, AverageMeter
 from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER
 from stutter.utils.loss import build_loss, CCCLoss
-
+import librosa
+import matplotlib.pyplot as plt
 
 
 metric_bank={
@@ -60,9 +61,7 @@ class Trainer(BaseTrainer):
             setattr(self, metric, metric_bank[metric])
 
         self._init_meters()
-        self.train_loader, self.val_loader, self.test_loader, weights = get_dataloaders(cfg)
-        # cfg.loss.weights = weights
-        cfg.freeze()
+        self.train_loader, self.val_loader, self.test_loader = get_dataloaders(cfg)
 
         # build model
         self.model, self.optimizer, self.scheduler = build_model(cfg)
@@ -101,23 +100,28 @@ class Trainer(BaseTrainer):
 
     def train(self):
         self.stage = 'train'
+        es = False
         for epoch in range(self.cfg.solver.epochs):
             self.model.train()
+
             self._reset_meters(self.train_meters)
             tq_obj = tqdm(self.train_loader, desc=f'Epoch {epoch}', leave=False)
-            for batch in tq_obj:
+            for i, batch in enumerate(tq_obj):
                 self.optimizer.zero_grad()
                 losses = self.train_step(batch)
                 for key, loss in losses.items():
                     self._update_meter(self.train_meters, f'{key}_train_loss', loss)
                     tq_obj.set_postfix({ key: loss })
 
-            self._write_meters(self.train_meters)
+                if i % self.cfg.solver.log_steps == 0:
+                    self._write_meters(self.train_meters)
 
-            # validation
-            if not self.validate(): 
-                self.save_model('last_checkpoint.pt')
-                break
+                if i % self.cfg.solver.eval_steps == 0:
+                    es = self.validate()
+                    if es: break
+            # self._write_meters(self.train_meters)
+
+            if es: break
 
             self.epoch += 1
     
@@ -156,8 +160,9 @@ class Trainer(BaseTrainer):
                 self.patience -= 1
                 if self.patience == 0:
                     print(f"Early Stopping at epoch {self.epoch} \nbest epoch at {self.best_epoch} with loss {self.best_val_loss}")
-                    return False
-        return True
+                    return True
+        self.model.train()
+        return False
 
     def test(self, loader=None, name='test'):
         loader = loader or self.test_loader
@@ -196,8 +201,8 @@ class Trainer(BaseTrainer):
         return vals
     
     def parse_batch_train(self, batch):
-        x = torch.cat([batch['mel_spec'], batch['f0']], dim=1)
-        # x = batch['mel_spec']
+        # x = torch.cat([batch['mel_spec'], batch['f0']], dim=1)
+        x = batch['mel_spec']
         y = batch['label']
         return x.to(self.device), y.to(self.device)
     
@@ -233,9 +238,10 @@ class MTLTrainer(Trainer):
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
 
         if 't1' in self.tasks:
-            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            y_t1 = (y>=2).float()
+            y_t1 = (torch.sum(y[:, :-1], dim=1)>0).long()
             loss1 = self.criterion['t1'](pred_t1, y_t1)
-            
+
         if 't2' in self.tasks:
             if  not isinstance(self.criterion['t2'], CCCLoss):
                 y_t2 = (y>=2).float()
@@ -256,7 +262,7 @@ class MTLTrainer(Trainer):
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
         if 't1' in self.tasks:
-            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).long()
             loss1 = self.criterion['t1'](pred_t1, y_t1)
         if 't2' in self.tasks:
             if  not isinstance(self.criterion['t2'], CCCLoss):
@@ -275,6 +281,8 @@ class MTLTrainer(Trainer):
             y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
             pred_t1 = torch.argmax(pred_t1, dim=1)
             metrics_1 = self.compute_metrics(pred_t1, y_t1)
+            self.test_preds.append(pred_t1.cpu().numpy())
+            self.test_labels.append(y_t1.cpu().numpy())
         if 't2' in self.tasks:
             y_t2 = (y>=2).int()
             pred_t2 = (torch.sigmoid(pred_t2)>=0.5).int()
@@ -299,11 +307,21 @@ class MTLTrainer(Trainer):
     #     preds = np.concatenate(self.test_preds, axis=0)
     #     labels = np.concatenate(self.test_labels, axis=0)
     #     num_classes = self.cfg.model.output_size
-    #     for i in range(num_classes):
-    #         cm = confusion_matrix(labels[:,i], preds[:,i])
-    #         disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
-    #         # log the confusion matrix
-    #         self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
+    #     cm = confusion_matrix(labels, preds)
+    #     disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
+    #     # log the confusion matrix
+    #     self.logger.add_figure(f'confusion_matrix_t1', disp.figure_)
+    
+    def after_test(self):
+        preds = np.concatenate(self.test_preds, axis=0)
+        labels = np.concatenate(self.test_labels, axis=0)
+        num_classes = self.cfg.model.output_size
+        for i in range(num_classes):
+            cm = confusion_matrix(labels[:,i], preds[:,i])
+            disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
+            # log the confusion matrix
+            self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
+        
 
 trainer_registery = {
     'mtl': MTLTrainer

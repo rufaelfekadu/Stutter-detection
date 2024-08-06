@@ -33,7 +33,7 @@ class CrossEntropyLossWithReg(nn.Module):
         return loss
 
 class FocalLoss(nn.Module):
-    __acceptable_params = ['alpha', 'gamma', 'reduction']
+    __acceptable_params = ['weights', 'gamma', 'reduction']
     def __init__(self, **kwargs):
         """
         Initializes the Focal Loss.
@@ -69,46 +69,38 @@ class FocalLoss(nn.Module):
             return F_loss
         
 class FocalLossMultiClass(nn.Module):
-    def __init__(self, alpha=None, gamma=2.0, reduction='mean'):
-        """
-        Initializes the Focal Loss for multi-class classification.
-
-        Parameters:
-        - alpha (tensor): Weighting factor for each class, shape (num_classes,).
-        - gamma (float): Modulating factor to focus on hard examples.
-        - reduction (str): Specifies the reduction to apply to the output: 'none' | 'mean' | 'sum'.
-        """
+    __acceptable_params = ['alpha', 'gamma', 'reduction', 'device']
+    def __init__(self, **kwargs):
         super(FocalLossMultiClass, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.reduction = reduction
+        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
+        self.gamma = kwargs.get('gamma', 2)
+        self.alpha = torch.tensor(self.alpha).to(self.device) if self.alpha is not None else None
 
     def forward(self, inputs, targets):
-        """
-        Compute the focal loss for multi-class classification.
-
-        Parameters:
-        - inputs (tensor): Predictions from the model, expected to be logits with shape (batch_size, num_classes).
-        - targets (tensor): Ground truth labels, with shape (batch_size,) where each value is 0 <= targets[i] <= num_classes-1.
-        """
+        
         # Convert inputs to probabilities
-        probs = F.softmax(inputs, dim=1)
-        targets_one_hot = F.one_hot(targets, num_classes=probs.shape[1]).float()
+        probs = F.sigmoid(inputs)
 
         # Calculate the cross entropy loss
-        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
-        pt = torch.sum(targets_one_hot * probs, dim=1)
+        bce = F.binary_cross_entropy(probs, targets, reduction='none')
 
-        # Calculate the focal loss
-        alpha_factor = self.alpha[targets] if self.alpha is not None else 1.0
-        focal_loss = alpha_factor * ((1 - pt) ** self.gamma) * ce_loss
+        pt = torch.where(targets == 1, probs, 1 - probs)
+        f_loss = (1 - pt) ** self.gamma * bce
+
+        if self.alpha is not None:
+            if self.alpha.dim() == 0:
+                alpha = self.alpha.expand_as(targets)
+            else:
+                alpha = self.alpha
+            alpha_t = torch.where(targets == 1, alpha, 1-alpha)
+            f_loss = alpha_t * f_loss
 
         if self.reduction == 'mean':
-            return torch.mean(focal_loss)
+            return f_loss.mean()
         elif self.reduction == 'sum':
-            return torch.sum(focal_loss)
+            return f_loss.sum()
         else:
-            return focal_loss
+            return f_loss
         
 class CCCLoss(nn.Module):
     def __init__(self, **kwargs):
@@ -130,18 +122,19 @@ class CCCLoss(nn.Module):
         return ccc_loss
 
 class BCELoss(nn.Module):
-    __acceptable_params = ['weights']
+    __acceptable_params = ['weights', 'device']
     def __init__(self, **kwargs):
         super(BCELoss, self).__init__()
         [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
-        self.weights = torch.tensor(self.weights)
+        self.weights = torch.tensor(self.weights).to(self.device)
 
     def forward(self, y_pred, y_true):
-        loss = F.binary_cross_entropy_with_logits(y_pred, y_true, weight=self.weights.to(y_pred.device))
+        loss = F.binary_cross_entropy_with_logits(y_pred, y_true, weight=self.weights)
         return loss
 
 class BCELossWithLogits(nn.BCEWithLogitsLoss):
     def __init__(self, **kwargs):
+        weights = kwargs.get('weights', [1, 1, 1, 1, 0.9, 0.7])
         super(BCELossWithLogits, self).__init__(weight=torch.tensor(kwargs.get('weights', None)))
     def forward(self, y_pred, y_true):
         return super().forward(y_pred, y_true)
@@ -149,12 +142,12 @@ class BCELossWithLogits(nn.BCEWithLogitsLoss):
 loss_registery = {
     'ccc': CCCLoss,
     'ce': CrossEntropyLoss,
-    'focal': FocalLoss,
+    'focal': FocalLossMultiClass,
     'bce': BCELossWithLogits
 }
 
 def build_loss(cfg):
     criterion = {}
     for key, loss in zip(cfg.tasks, cfg.solver.losses):
-        criterion[key] = loss_registery[loss](**cfg.loss).to(cfg.solver.device)
+        criterion[key] = loss_registery[loss](device=cfg.solver.device, **cfg.loss ).to(cfg.solver.device)
     return criterion

@@ -1,3 +1,4 @@
+tasks: ['t2']
 # model
 model:
   name: 'lstm'
@@ -5,21 +6,26 @@ model:
   num_layers: 2
   dropout: 0.3
   output_size: 6
-  input_size: 43
+  input_size: 40
 
 solver:
   num_workers: 8
-  batch_size: 32
+  batch_size: 128
   epochs: 300
-  lr: 0.001
-  es_patience: 200
+  lr: 0.01
+  es_patience: 100
   device: 'cuda'
-  scheduler: 'none'
+  scheduler: 'plateau'
   factor: 0.5
-  patience: 5
-  min_lr: 0.000225
-  losses: ['bce', 'bce']
+  patience: 10
+  min_lr: 1e-5
+  losses: ['focal']
+  log_steps: 20
+  eval_steps: 20
 
-# loss:
-#   weights: [0.96, 0.98, 0.95, 0.94, 0.85, 0.65]
+loss:
+  weights: [0.96, 0.98, 0.95, 0.94, 0.85, 0.1] # weights for bce loss
+  alpha: [0.96, 0.96, 0.96, 0.96, 0.7, 0.6] # alpha for focal loss
+  reduction: 'mean'
+  gamma: 2
 

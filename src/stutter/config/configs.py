@@ -5,7 +5,7 @@ _C = CN()
 
 _C.name = 'stutter-detection'
 _C.seed = 42
-_C.tasks = ['t2']
+_C.tasks = ['t1']
 _C.setting = 'mtl'
 
 
@@ -23,6 +23,14 @@ _C.data.name = 'sep28k'
 _C.data.root = 'datasets/sep28k/clips'
 _C.data.label_path = 'datasets/sep28k/SEP-28k_labels_new.csv'
 _C.data.ckpt = 'dataset'
+
+_C.data.n_mels = 40
+_C.data.win_length = 400
+_C.data.hop_length = 160
+_C.data.n_fft = 512
+_C.data.sr = 16000
+_C.data.n_frames = 3
+
 
 # data loader configs
 
@@ -43,14 +51,14 @@ _C.model.emb_dim = 64
 # loss configs
 _C.loss = CN()
 _C.loss.gamma = 2
-_C.loss.alpha = 0.5
+_C.loss.alpha = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 _C.loss.reduction = 'mean'
 _C.loss.weights = [1.0, 1.0, 1.0, 1.0, 0.9, 0.5]
 
 
 # training configs
 _C.solver = CN()
-_C.solver.losses = ['bce']
+_C.solver.losses = ['ce']
 _C.solver.device = 'cuda'
 _C.solver.epochs = 10
 
@@ -80,5 +88,9 @@ _C.solver.T_max = 10
 _C.solver.eta_min = 0.0001
 _C.solver.min_lr = 0.001
 _C.solver.milestones = [50, 100, 150]
+
+# logging
+_C.solver.eval_steps = 10
+_C.solver.log_steps = 10
 
 

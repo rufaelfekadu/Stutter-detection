@@ -21,7 +21,7 @@ def main(cfg):
 
     logger = WandbLogger(cfg)
 
-    trainer = build_trainer(cfg, logger, metrics=['f1', 'wacc'])
+    trainer = build_trainer(cfg, logger, metrics=['f1_macro'])
     
     trainer.train()
     trainer.load_model()

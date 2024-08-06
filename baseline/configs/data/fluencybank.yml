@@ -1,6 +1,6 @@
 
 data: 
   name: 'fluencybank'
-  root: 'datasets/fluencybank/clips'
+  root: 'datasets/fluencybank/new_clips'
   label_path: outputs/fluencybank/fluencybank_labels_new_split.csv
 

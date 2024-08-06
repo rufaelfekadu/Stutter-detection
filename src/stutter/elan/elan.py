@@ -52,7 +52,7 @@ class ELANGroup(object):
         self.gold_ann = None
 
         self.elan_files = elan_files
-        self.elans = [ELAN(elan_file, label_tier_name=label_tier_name) for elan_file in elan_files]
+        self.elans = [self.read_elans(elan_file, label_tier_name=label_tier_name) for elan_file in elan_files]
 
         self.compute_agreement()
         self.combine_elans()
@@ -60,14 +60,15 @@ class ELANGroup(object):
         if save_path:
             self.write_to_file(save_path)
     
-    def check_media(self, elan):
+    def read_elans(self, elan_file, label_tier_name="stuttering moments"):
+        elan = ELAN(elan_file, label_tier_name=label_tier_name)
         md_file = elan.media_file
         if self.media_file is None:
             self.media_file = md_file
         elif self.media_file != md_file:
             print(f'Media files do not match: {self.media_file} != {elan.media_file}')
-            return False
-        return True
+            return None
+        return elan
     
     def compute_agreement(self):
         # TODO: compute agreement between annotators and return the mas, bau and sad tiers

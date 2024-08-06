@@ -3,32 +3,112 @@ from torch.utils.data import Dataset
 from torchvision.transforms import ToTensor
 import torchaudio
 import pandas as pd
+import numpy as np
 import os
 from stutter.utils.misc import load_audio_files
+import torch.nn.functional as F
+from sklearn.preprocessing import MinMaxScaler
 
+class ScaleTransform:
+    def __init__(self, scaler=MinMaxScaler()):
+        self.scaler = scaler
+    def __call__(self, x):
+        # flatten the input
+        n, c, l = x.shape
+        x = x.reshape(n, -1)
+        x = self.scaler.transform(x)
+        return x.reshape(n, c, l)
+    def fit(self, x):
+        n, c, l = x.shape
+        x = x.reshape(n, -1)
+        self.scaler.fit(x)
+        return self
 
 class FluencyBank(Dataset):
-    __acceptable_params = ['root', 'label_path', 'ckpt']
-    def __init__(self, transforms=None, save=True, split='train', **kwargs):
-        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
 
+    __acceptable_params = ['root', 'label_path', 'ckpt', 'name', 'n_mels', 'win_length', 'hop_length', 'n_fft']
+
+    def __init__(self, transforms=None, save=True, **kwargs):
+        [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
+
+        self.length = 3
         self.transform = transforms
+        self.scaler = ScaleTransform(MinMaxScaler())
+
         self.label_columns = ['Prolongation', 'Block', 'SoundRep', 'WordRep', 'Interjection', 'NoStutteredWords']
-        self.ckpt = f'{self.ckpt}/{split}.pt' if self.ckpt else f'{self.name}_{split}.pt'
+        self.ckpt = f'{self.ckpt}/{self.name}.pt' if self.ckpt else f'{self.name}.pt'
 
         if os.path.isfile(self.ckpt):
             print("************ Loading Cached Dataset ************")
-            self.mel_spec, self.f0, self.label = torch.load(self.ckpt)
+            self.mel_spec, self.f0, self.label, self.split = torch.load(self.ckpt)
          
         else:
             print("************ Loading Dataset ************")
-            self._load_data(split=split)
+            self._load_data(**kwargs)
             if save:
-                torch.save((self.mel_spec, self.f0, self.label), self.ckpt)
+                torch.save((self.mel_spec, self.f0, self.label, self.split), self.ckpt)
                 # torch.save((self.data, self.label), self.ckpt)
     
     
-    def _load_data(self, split='train'):
+    def _load_data(self, **kwargs):
+        
+        data_path = self.root
+        df = pd.read_csv(self.label_path)
+        df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['Show'], str(row['EpId']).rjust(3,'0'), f"{row['Show']}_{str(row['EpId']).rjust(3,'0')}_{row['ClipId']}.wav"), axis=1)
+        
+        if not 'split' in df.columns:
+            unique_clips = df['EpId'].unique()
+            df['split'] = df['EpId'].apply(lambda x: 'train' if x in unique_clips[:int(0.8*len(unique_clips))] else 'val' if x in unique_clips[int(0.8*len(unique_clips)):int(0.9*len(unique_clips))] else 'test')
+        
+        self.mel_specs, self.f0, failed = load_audio_files(df, **kwargs)
+        # remove failed files
+        print(f"Failed to load {len(failed)} files")
+        df = df.drop(failed).reset_index(drop=True)
+        self.mel_specs = np.stack([x for x in self.mel_specs if x is not None])
+        self.f0 = np.stack([x for x in self.f0 if x is not None])
+               
+        # scale the mel_specs
+        train_idx = df[df['split'] == 'train'].index
+        self.scaler.fit(self.mel_specs[train_idx])
+        self.mel_spec = self.scaler(self.mel_specs)
+
+        df['split'] = df['split'].apply(lambda x: 0 if x == 'train' else 1 if x == 'val' else 2)
+        self.split = df['split'].values
+        
+        self.label = torch.tensor(df[self.label_columns].values, dtype=torch.float32)
+        self.mel_spec = torch.tensor(self.mel_spec, dtype=torch.float32)
+        self.f0 = torch.tensor(self.f0, dtype=torch.float32)
+
+        del df
+    
+    
+    def __len__(self):
+        return len(self.mel_spec)
+
+    def __getitem__(self, idx):
+        return {
+            'mel_spec': self.mel_spec[idx].squeeze(0),
+            # 'f0': self.f0[idx],
+            'label': self.label[idx]
+        }
+
+class FluencyBankSlow(Dataset):
+    __acceptable_params = ['root', 'label_path', 'ckpt', 'name', 'n_mels', 'win_length', 'hop_length', 'n_fft', 'n_frames', 'sr']
+    def __init__(self, transforms=None, split='train', **kwargs):
+        [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
+
+        self.length = (self.n_frames*self.sr + self.win_length) // self.hop_length - 1
+
+        self.transform = torchaudio.transforms.MelSpectrogram(win_length=self.win_length, hop_length=self.hop_length, n_mels=self.n_mels, sample_rate=self.sr)
+        self.label_columns = ['Prolongation', 'Block', 'SoundRep', 'WordRep', 'Interjection', 'NoStutteredWords']
+        self.ckpt = f'{self.ckpt}/{split}.pt' if self.ckpt else f'{self.name}_{split}.pt'
+
+        self.label, self.data_paths = self.load_data(split=split, **kwargs)
+
+        self.label = torch.tensor(self.label, dtype=torch.float32)
+
+    def load_data(self, split, **kwargs):
+
         data_path = self.root
         df = pd.read_csv(self.label_path)
         df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['Show'], str(row['EpId']).rjust(3,'0'), f"{row['Show']}_{str(row['EpId']).rjust(3,'0')}_{row['ClipId']}.wav"), axis=1)
@@ -42,38 +122,33 @@ class FluencyBank(Dataset):
             print(df['split'].value_counts())
         
         df = df[df['split'] == split].reset_index(drop=True)
-
-        # df = df[df[self.label_columns].apply(lambda x: x>=2).any(axis=1)].reset_index(drop=True)
-
-        self.mel_spec, self.f0, failed = load_audio_files(df)
-
-
-        print(f"Failed to load {len(failed)} files")
-        df = df.drop(failed).reset_index(drop=True)
-
-        # to tensor
-        self.mel_spec = torch.tensor(self.mel_spec, dtype=torch.float32)
-        self.f0 = torch.tensor(self.f0, dtype=torch.float32)
-        self.label = torch.tensor(df[self.label_columns].values, dtype=torch.float32)
-
-        del df
-    
+        return df[self.label_columns].values, df['file_path'].values
     
     def __len__(self):
-        return len(self.mel_spec)
-
+        return len(self.data_paths)
+    
     def __getitem__(self, idx):
+        # load the audio file
+        waveform, sample_rate = torchaudio.load(self.data_paths[idx], format='wav')
+        mel_spec = self.transform(waveform)
+        if mel_spec.shape[2] < self.length:
+            mel_spec = F.pad(mel_spec, (0, self.length - mel_spec.shape[2]))
         return {
-            'mel_spec': self.mel_spec[idx],
-            'f0': self.f0[idx],
+            'mel_spec': mel_spec.squeeze(0),
             'label': self.label[idx]
         }
-        # return self.data[idx], self.label_fluent[idx], self.label_ccc[idx], self.label_per_type[idx]
+    
+# get all none values from list
 
 if __name__ == "__main__":
-    label_path = 'datasets/fluencybank/fluencybank_labels.csv'
-    data_path = 'datasets/fluencybank/clips/'
-    ck_path = 'datasets/fluencybank/dataset.pt'
-    train_transforms = torchaudio.transforms.MelSpectrogram(win_length=400, hop_length=160, n_mels=257)
-    dataset = FluencyBank(root=data_path, ckpt=ck_path, label_path=label_path, transforms=train_transforms)
+    kwargs = {
+        'root': 'datasets/fluencybank/new_clips/',
+        'label_path': 'outputs/fluencybank/fluencybank_labels_new_split.csv',
+        'ckpt': 'outputs/fluencybank/',
+        'name': 'fluencybank',
+        'n_mels': 40,
+        'win_length': 400,
+        'hop_length': 160,
+    }
+    dataset = FluencyBank(**kwargs)
     print(dataset[0])
