@@ -1,67 +1,66 @@
 
 import xml.etree.ElementTree as ET
+import xml.dom.minidom
 import os
 import pandas as pd
-
-class LabelMap(object):
-    def __init__(self):
-        self.RM = 0
-        self.FP = 1
-        self.SR = 2
-        self.ISR = 3
-        self.MUR = 4
-        self.P = 5
-        self.B = 6
-        self.V = 7
-        self.NV = 8
-        self.T_0 = 9
-        self.T_1 = 10
-        self.T_2 = 11
-        self.T_3 = 12
-
-        self.core = [self.RM, self.FP, self.SR, self.ISR, self.MUR, self.P, self.B]
-        self.secondary = [self.V, self.NV]
-        self.tension = [self.T_0, self.T_1, self.T_2, self.T_3]
-
-    def __dict__(self):
-        return {'RM': self.RM, 'FP': self.FP, 'SR': self.SR, 'ISR': self.ISR, 'MUR': self.MUR, 'P': self.P, 'B': self.B, 'V': self.V, 'NV': self.NV, 'T_0': self.T_0, 'T_1': self.T_1, 'T_2': self.T_2, 'T_3': self.T_3}
-
-def strfromlabel(label_array):
-    label_map = LabelMap().__dict__()
-    core = '+'.join([key for key, value in label_map.items() if label_array[value] == 1 and value in label_map.core])
-    secondary = ''.join([key for key, value in label_map.items() if label_array[value] == 1 and value in label_map.secondary])
-    tension = ''.join([key.split('_')[1] for key, value in label_map.items() if label_array[value] == 1 and value in label_map.tension])
-    return f'{core};{secondary};{tension}'
-
-def labelfromstr(label_str):
-    label_map = LabelMap().__dict__()
-    core, secondary, tension = label_str.split(';')
-    label_array = [0] * len(label_map)
-    for c in core.split('+'):
-        label_array[label_map[c]] = 1
-    label_array[label_map[secondary]] = 1
-    label_array[label_map[f'T_{tension}']] = 1
-    return label_array
+import re
+import json
+from stutter.utils.annotation import LabelMap, clean_element
 
 class ELANGroup(object):
     
-    def __init__(self, elan_files, save_path=None, label_tier_name='stuttering moments'):
-        self.label_map = LabelMap().__dict__()
+    def __init__(self, elan_files, save_path=None, label_tier_name='stuttering moments', sep28k=None):
+
+        
         self.media_file = None
         self.annotations = None
         self.gold_ann = None
+        self.label_map = LabelMap()
 
         self.elan_files = elan_files
-        self.elans = [self.read_elans(elan_file, label_tier_name=label_tier_name) for elan_file in elan_files]
-
-        self.compute_agreement()
-        self.combine_elans()
+        self.elans = [self.read_elan(elan_file, label_tier_name=label_tier_name, label_map=self.label_map) for elan_file in elan_files]
+        
+        self.sep28k = self.add_sep28k(sep28k) if sep28k else None
+        self.bau = None
+        self.mas = None
+        self.sad = None
+        # self.compute_agreement()
 
         if save_path:
+            self.build_combined_tree()
             self.write_to_file(save_path)
+
+    def add_elan(self, elan_file):
+        elan = self.read_elan(elan_file)
+        self.elans.append(elan)
+        return elan
     
-    def read_elans(self, elan_file, label_tier_name="stuttering moments"):
-        elan = ELAN(elan_file, label_tier_name=label_tier_name)
+    def add_sep28k(self, csv_files):
+
+        if not self.media_file:
+            raise ValueError('Media file not set please add elan files first')
+        
+        df_sep = pd.read_csv(csv_files[0])
+        df_sep_episodes = pd.read_csv(csv_files[1], header=None)
+
+        df_sep['annotation'] = df_sep.iloc[:, 5:].apply(lambda row: self.label_map.strfromsep28k(row.to_list()), axis=1)
+
+        df_sep_episodes[2] = df_sep_episodes[2].apply(lambda x: x.split('/')[-1].replace('.mp4', '.wav'))
+        episode_map = {row[2]: row[3] for row in df_sep_episodes.itertuples()}
+        df_sep['item'] = df_sep['EpId'].map(episode_map)
+        df_sep = df_sep[df_sep['item']==self.media_file]
+
+        # update the start and end times from segment to time in ms with fs=16000
+        df_sep[['start_time','end_time']] = df_sep[['Start','Stop']].apply(lambda x: x*1000/16000).astype(int)
+
+        df_sep = df_sep[['start_time', 'end_time', 'annotation']]
+        # drop row if null value in row
+        df_sep.dropna(inplace=True)
+
+        return df_sep
+
+    def read_elan(self, elan_file, label_tier_name="stuttering moments", label_map=None):
+        elan = ELAN(elan_file, label_tier_name=label_tier_name, label_map=label_map)
         md_file = elan.media_file
         if self.media_file is None:
             self.media_file = md_file
@@ -77,7 +76,7 @@ class ELANGroup(object):
         self.sad = self.get_ann_from_json('datasets/fluencybank/sad_bb_ann.json')
         pass
 
-    def combine_elans(self, mas=None, bau=None, sad=None):
+    def build_combined_tree(self, mas=None, bau=None, sad=None):
 
         self.root = ET.Element('ANNOTATION_DOCUMENT')
         self.root.attrib['AUTHOR'] = 'FluencyBank'
@@ -112,13 +111,17 @@ class ELANGroup(object):
                             ann_value = ET.SubElement(align_ann, 'ANNOTATION_VALUE')
                             ann_value.text = alignable_annotation.find('ANNOTATION_VALUE').text
 
-        # append mas, bau and gold tiers
+        # append mas, bau and sad tiers
         if self.mas is not None:
             self.append_ann_to_new_tier(self.mas, name='mas')
         if self.bau is not None:
             self.append_ann_to_new_tier(self.bau, name='bau')
         if self.sad is not None:
             self.append_ann_to_new_tier(self.sad, name='sad')
+        
+        # # append sep28k tiers
+        if self.sep28k is not None:
+            self.append_ann_to_new_tier(self.sep28k, name='sep28k')
 
         # append lingustic types and constraints
         for lingustic_type in self.elans[0].root.iter('LINGUISTIC_TYPE'):
@@ -126,16 +129,27 @@ class ELANGroup(object):
         for constraint in self.elans[0].root.iter('CONSTRAINT'):
             self.root.append(constraint)
         
-    def extract_labels(self):
-        ann_dfs = [elan.extract_labels() for elan in self.elans]
-        temp_df = pd.concat(ann_dfs)
+    def extract_labels(self, save_path=None):
+        anns = []
+        total_failed = 0
+        for elan in self.elans:
+            ann, failed = elan.extract_labels()
+            anns.append(ann)
+            total_failed += len(failed)
+        print(f'Total failed annotations: {total_failed}')
+        self.annotations = pd.concat(anns)
         # temp_df['raw_annotations'] = temp_df[list(self.label_map.keys())+['start_time','end_time']].apply(lambda row: f'{{"bb":"({row["start_time"]},{row["end_time"]})", "ann":"{row[self.label_map.keys()].to_list()}"}}', axis=1)
-        temp_df.to_csv('datasets/fluencybank/labels_temp.csv', index=False)
-        self.annotations = temp_df
-        return temp_df
+        if save_path:
+            self.annotations.to_csv(save_path, index=False)
+        return self.annotations
     
     def append_ann_to_new_tier(self,ann, name='gold'):
-
+        '''
+        Append annotations to a new tier
+        input:
+            ann: pd.DataFrame containing annotations with columns start_time, end_time and annotation
+            name: str
+        '''
         new_tier = ET.SubElement(self.root, 'TIER')
         new_tier.attrib['TIER_ID'] = f'{name}'
         new_tier.attrib['LINGUISTIC_TYPE_REF'] = 'orthography'
@@ -143,9 +157,9 @@ class ELANGroup(object):
         for i, (_,row) in enumerate(ann.iterrows()):
 
             try:
-                start_time = str(row[0])
-                end_time = str(row[1])
-                annotation = strfromlabel(row.values[2:])
+                start_time = str(row['start_time'])
+                end_time = str(row['end_time'])
+                annotation = row['annotation']
             except Exception as e:
                 print(f'Error extracting annotation from row {i}: {e}')
                 continue
@@ -170,12 +184,13 @@ class ELANGroup(object):
             ann_value = ET.SubElement(align_ann, 'ANNOTATION_VALUE')
             ann_value.text = annotation
     
-    @staticmethod
-    def get_ann_from_json(json_file):
+    def get_ann_from_json(self, json_file):
         try:
             ann = pd.read_json(json_file)
             ann = ann.T
             ann.sort_values(0, inplace=True)
+            ann.rename(columns={0:'start_time', 1:'end_time'}, inplace=True)
+            ann['annotation'] = ann.iloc[:, 2:].apply(lambda row: self.label_map.strfromlabel(row.to_list()), axis=1)
         except Exception as e:
             print(f'Error reading {json_file}: {e}')
             return None
@@ -184,63 +199,36 @@ class ELANGroup(object):
     def write_to_file(self, save_path='combined.eaf'):
         # write the root to .eaf file
         tree = ET.ElementTree(self.root)
-        tree.write(save_path, encoding='utf-8', xml_declaration=True, method='xml')
+        clean_element(self.root)
+        xml_string = ET.tostring(self.root, encoding='utf-8', xml_declaration=True, method='xml')
+        pretty_xml = xml.dom.minidom.parseString(xml_string).toprettyxml(indent="    ")
+
+        with open(save_path, 'w', encoding='utf-8') as file:
+            file.write(pretty_xml)
 
 class ELAN(object):
 
-    def __init__(self, file_path, label_tier_name='stuttering moments'):
+    def __init__(self, file_path, label_tier_name='stuttering moments', label_map=None):
 
-        self.annotator_id = os.path.basename(file_path).split('.')[0].split('_')[1]
+        pattern = r'/(A\d+)_'
+        self.annotator_id = re.search(pattern, file_path).group(1)
         self.file_path = file_path
         self.tree = ET.parse(file_path)
         self.root = self.tree.getroot()
         self.media_file = self.get_media_file()
         self.label_tier_name = label_tier_name
-        self.label_map = LabelMap().__dict__()
+        self.label_map = label_map if label_map else LabelMap()
 
         # xml components
         self.time_slots = self.root.findall('TIME_ORDER/TIME_SLOT')
         self.tiers = self.root.findall('TIER')
         self.header = self.root.find('HEADER')
         self.ann_tier = self.root.find(f'TIER[@TIER_ID="{self.label_tier_name}"]')
+        self.failed = []
 
     def get_media_file(self):
         media_file = [media_file.attrib.get('MEDIA_URL') for media_file in self.root.iter('MEDIA_DESCRIPTOR') if media_file.attrib.get('MIME_TYPE') == 'audio/x-wav'][0]
         return os.path.basename(media_file)
-    
-    # TODO: Update this function
-    def get_label_array(self, label):
-        label_map = self.label_map
-        label_array = [0] * len(label_map)
-        if not label:
-            return label_array
-        try:
-            core, secondary, tension = label.split(';')
-        except Exception as e:
-            print(f'Error splitting label {label}')
-            core, secondary, tension = None, None, None
-        # get core
-        try:
-            if '+' in core:
-                cores = core.split('+')
-                for c in cores:
-                    label_array[label_map[c]] = 1
-            label_array[label_map[core]] = 1
-        except KeyError as e:
-            print(label,e)
-        # get secondary
-        try:
-            if not secondary in ['0','_']:
-                label_array[label_map[secondary]] = 1
-        except KeyError as e:
-            print(label,e)
-        # get tension
-        try:
-            label_array[label_map[f'T_{tension}']] = 1
-        except KeyError as e:
-            print(label,e)
-
-        return label_array
 
     def extract_labels(self):
 
@@ -253,32 +241,65 @@ class ELAN(object):
             if tier.attrib.get('TIER_ID').lower() == self.label_tier_name:
                 for annotation in tier.iter('ANNOTATION'):
                     for alignable_annotation in annotation.iter('ALIGNABLE_ANNOTATION'):
-                        lables = self.get_label_array(alignable_annotation.find('ANNOTATION_VALUE').text)
-
+                        label = self.label_map.labelfromstr(alignable_annotation.find('ANNOTATION_VALUE').text)
+                        if label is None:
+                            self.failed.append((self.annotator_id, self.media_file, alignable_annotation.find('ANNOTATION_VALUE').text))
+                            print(f'Failed to extract label from {alignable_annotation.find("ANNOTATION_VALUE").text} by annotator {self.annotator_id} in file {self.media_file}')
+                            continue
                         ann_id = alignable_annotation.attrib.get('ANNOTATION_ID')
                         s = alignable_annotation.attrib.get('TIME_SLOT_REF1')
                         start = self.root.find(f'TIME_ORDER/TIME_SLOT[@TIME_SLOT_ID="{s}"]').attrib.get('TIME_VALUE')
                         e = alignable_annotation.attrib.get('TIME_SLOT_REF2')
                         end = self.root.find(f'TIME_ORDER/TIME_SLOT[@TIME_SLOT_ID="{e}"]').attrib.get('TIME_VALUE')
 
-                        labels.append(lables)
+                        labels.append(label)
                         annotation_ids.append(ann_id)
                         start_times.append(start)
                         end_times.append(end)
 
         ann_df = pd.DataFrame({'annotation_id': annotation_ids, 'start_time': start_times, 'end_time': end_times})
-        for key, value in zip(self.label_map.keys(), zip(*labels)):
-            ann_df[key] = value
+        ann_df[self.label_map.labels] = pd.DataFrame(labels)
         ann_df['annotator_id'] = self.annotator_id
         ann_df['media_file'] = self.media_file
 
-        return  ann_df
+        return  ann_df, self.failed
 
 if __name__ == "__main__":
 
-    elanfiles = [i for i in os.listdir("datasets/fluencybank") if i.endswith('.eaf')]
-    elan_group = ELANGroup([f'datasets/fluencybank/{i}' for i in elanfiles])
-    elan_group.write_to_file()
-    # elan_group.extract_labels().to_csv('datasets/fluencybank/labels_temp.csv', index=False)
+    # walk through the fluencybank directory and get all the elan files
+    file_path = 'datasets/fluencybank/our_annotations/'
+    combined_save_path = 'outputs/fluencybank/combined_files/'
+    csv_save_path = 'outputs/fluencybank/our_annotations.csv'
+
+    elanfiles = {}
+    for root, dirs, files in os.walk(file_path):
+        for file in files:
+            if file.endswith('.eaf'):
+                if file not in elanfiles:
+                    elanfiles[file] = [os.path.join(root, file)]
+                else:
+                    elanfiles[file].append(os.path.join(root, file))
+    
+    anns = pd.DataFrame()
+    failed = {}
+    for key, value in elanfiles.items():
+        if len(value)==1:
+            continue
+        print(f'Processing {key}')
+        elan_group = ELANGroup(value, 
+                            #    save_path=combined_save_path+key, 
+                            #    sep28k=('datasets/fluencybank/fluencybank_labels.csv', 'datasets/fluencybank/fluencybank_episodes.csv')
+                               )
+        ann = elan_group.extract_labels()
+        # failed[key] = [(f.annotator_id, f.failed) for f in elan_group.elans]
+        anns = pd.concat([anns, ann])
+    # print the number of annotated events per item per annotator
+    print(anns.groupby(['media_file', 'annotator_id']).size())
+    # with open('outputs/fluencybank/failed_annotations.json', 'w') as f:
+    #     json.dump(failed, f)
+
+    # anns.to_csv(csv_save_path, index=False)
+
+
 
 
