@@ -11,6 +11,8 @@ from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accura
 from stutter.utils.loss import build_loss, CCCLoss
 import librosa
 import matplotlib.pyplot as plt
+from transformers import AutoModelForAudioClassification, TrainingArguments
+from transformers import Trainer as HuggingFaceTrainer
 
 
 metric_bank={
@@ -102,8 +104,8 @@ class Trainer(BaseTrainer):
         self.stage = 'train'
         es = False
         for epoch in range(self.cfg.solver.epochs):
-            self.model.train()
 
+            self.model.train()
             self._reset_meters(self.train_meters)
             tq_obj = tqdm(self.train_loader, desc=f'Epoch {epoch}', leave=False)
             for i, batch in enumerate(tq_obj):
@@ -150,7 +152,7 @@ class Trainer(BaseTrainer):
 
             self._write_meters(self.val_meters)
             #  Early Stopping
-            total_loss = sum([self.val_meters[f'{key}_val_loss'].avg for key in tasks])
+            # total_loss = sum([self.val_meters[f'{key}_val_loss'].avg for key in tasks])
             if total_loss < self.best_val_loss:
                 self.best_val_loss = total_loss
                 self.best_epoch = self.epoch
@@ -171,15 +173,12 @@ class Trainer(BaseTrainer):
         self._reset_meters(self.test_meters)
 
         with torch.no_grad():
-            
             for batch in loader:
                 metrics = self.test_step(batch)
-                
                 for key_task, metric in metrics.items():
                     for key_metric, val in metric.items():
                         self._update_meter(self.test_meters, f'{key_task}_{name}_{key_metric}', val)
                 
-
         self._write_meters(self.test_meters)
         self.after_test()
         
@@ -192,6 +191,7 @@ class Trainer(BaseTrainer):
 
     def load_model(self, path='best_checkpoint.pt'):
         path = os.path.join(self.cfg.output.checkpoint_dir, path)
+        print(f'Loading model from {path}')
         self.model.load_state_dict(torch.load(path))
 
     def compute_metrics(self, pred, y):
@@ -247,8 +247,7 @@ class MTLTrainer(Trainer):
                 y_t2 = (y>=2).float()
             loss2 = self.criterion['t2'](pred_t2, y_t2)
 
-        loss = loss2
-
+        loss = loss1 + loss2
         loss.backward()
         self.optimizer.step()
 
@@ -262,6 +261,7 @@ class MTLTrainer(Trainer):
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
         if 't1' in self.tasks:
+            y_t1 = (y>=2).float()
             y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).long()
             loss1 = self.criterion['t1'](pred_t1, y_t1)
         if 't2' in self.tasks:
@@ -278,17 +278,20 @@ class MTLTrainer(Trainer):
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         metrics_1, metrics_2 = {}, {}
         if 't1' in self.tasks:
+            y_t1 = (y>=2).int()
             y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
             pred_t1 = torch.argmax(pred_t1, dim=1)
             metrics_1 = self.compute_metrics(pred_t1, y_t1)
             self.test_preds.append(pred_t1.cpu().numpy())
             self.test_labels.append(y_t1.cpu().numpy())
+
         if 't2' in self.tasks:
             y_t2 = (y>=2).int()
             pred_t2 = (torch.sigmoid(pred_t2)>=0.5).int()
             metrics_2 = self.compute_metrics(pred_t2, y_t2)
             self.test_preds.append(pred_t2.cpu().numpy())
             self.test_labels.append(y_t2.cpu().numpy())
+
         return {
             't1': metrics_1,
             't2': metrics_2
@@ -315,12 +318,26 @@ class MTLTrainer(Trainer):
     def after_test(self):
         preds = np.concatenate(self.test_preds, axis=0)
         labels = np.concatenate(self.test_labels, axis=0)
-        num_classes = self.cfg.model.output_size
-        for i in range(num_classes):
+        for i in range(self.num_classes):
             cm = confusion_matrix(labels[:,i], preds[:,i])
             disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
             # log the confusion matrix
             self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
+
+class Wave2vecTrainer(Trainer):
+    def __init__(self, cfg, logger=None, metrics=['acc']):
+        super(Wave2vecTrainer, self).__init__(cfg, logger, metrics = metrics)
+        
+        self.model = AutoModelForAudioClassification.from_pretrained(cfg.model.name)
+        self.num_classes = cfg.model.output_size
+        self.test_preds = []
+        self.test_labels = []
+    
+    def train(self):
+        self.hug_trainer.train()
+    
+    def test(self):
+        self.hug_trainer.evaluate()
         
 
 trainer_registery = {

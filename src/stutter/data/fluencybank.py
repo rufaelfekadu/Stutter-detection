@@ -5,7 +5,9 @@ import torchaudio
 import pandas as pd
 import numpy as np
 import os
-from stutter.utils.misc import load_audio_files
+import librosa
+from stutter.utils.data import load_audio_files
+from stutter.utils.data import logmelfilterbank
 import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler
 
@@ -49,7 +51,6 @@ class FluencyBank(Dataset):
                 torch.save((self.mel_spec, self.f0, self.label, self.split), self.ckpt)
                 # torch.save((self.data, self.label), self.ckpt)
     
-    
     def _load_data(self, **kwargs):
         
         data_path = self.root
@@ -81,7 +82,6 @@ class FluencyBank(Dataset):
 
         del df
     
-    
     def __len__(self):
         return len(self.mel_spec)
 
@@ -99,21 +99,18 @@ class FluencyBankSlow(Dataset):
 
         self.length = (self.n_frames*self.sr + self.win_length) // self.hop_length - 1
 
-        self.transform = torchaudio.transforms.MelSpectrogram(win_length=self.win_length, hop_length=self.hop_length, n_mels=self.n_mels, sample_rate=self.sr)
+        # self.transform = torchaudio.transforms.MelSpectrogram(win_length=self.win_length, hop_length=self.hop_length, n_mels=self.n_mels, sample_rate=self.sr)
         self.label_columns = ['Prolongation', 'Block', 'SoundRep', 'WordRep', 'Interjection', 'NoStutteredWords']
-        self.ckpt = f'{self.ckpt}/{split}.pt' if self.ckpt else f'{self.name}_{split}.pt'
 
-        self.label, self.data_paths = self.load_data(split=split, **kwargs)
-
+        self.label, self.data_paths = self.load_data()
         self.label = torch.tensor(self.label, dtype=torch.float32)
 
-    def load_data(self, split, **kwargs):
+    def load_data(self):
 
         data_path = self.root
         df = pd.read_csv(self.label_path)
         df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['Show'], str(row['EpId']).rjust(3,'0'), f"{row['Show']}_{str(row['EpId']).rjust(3,'0')}_{row['ClipId']}.wav"), axis=1)
         
-        # Split the data into train, val, and test
         if not 'split' in df.columns:
             unique_clips = df['EpId'].unique()
             print("unique files: ", len(unique_clips))
@@ -121,7 +118,8 @@ class FluencyBankSlow(Dataset):
             df['split'] = df['EpId'].apply(lambda x: 'train' if x in unique_clips[:int(0.8*len(unique_clips))] else 'val' if x in unique_clips[int(0.8*len(unique_clips)):int(0.9*len(unique_clips))] else 'test')
             print(df['split'].value_counts())
         
-        df = df[df['split'] == split].reset_index(drop=True)
+        self.split = df['split'].values
+
         return df[self.label_columns].values, df['file_path'].values
     
     def __len__(self):
@@ -129,12 +127,12 @@ class FluencyBankSlow(Dataset):
     
     def __getitem__(self, idx):
         # load the audio file
-        waveform, sample_rate = torchaudio.load(self.data_paths[idx], format='wav')
-        mel_spec = self.transform(waveform)
-        if mel_spec.shape[2] < self.length:
-            mel_spec = F.pad(mel_spec, (0, self.length - mel_spec.shape[2]))
+        # waveform, sample_rate = torchaudio.load(self.data_paths[idx], format='wav')
+        waveform, sample_rate = librosa.load(self.data_paths[idx], sr=self.sr)
+        # mel_spec = logmelfilterbank(waveform, sample_rate, fft_size=self.n_mels, hop_size=self.hop_length, win_length=self.win_length)
+        y = np.pad(y, (0, 48000 - len(y)), constant_values=0)
         return {
-            'mel_spec': mel_spec.squeeze(0),
+            'audio': waveform.squeeze(0),
             'label': self.label[idx]
         }
     

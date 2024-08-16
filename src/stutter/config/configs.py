@@ -53,7 +53,7 @@ _C.loss = CN()
 _C.loss.gamma = 2
 _C.loss.alpha = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 _C.loss.reduction = 'mean'
-_C.loss.weights = [1.0, 1.0, 1.0, 1.0, 0.9, 0.5]
+_C.loss.weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 
 # training configs

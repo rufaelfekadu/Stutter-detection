@@ -1,14 +1,15 @@
 import re
 import numpy as np
 import pandas as pd
+import sys
 
 class LabelMap(object):
     def __init__(self):
-        self.labels = ['FP', 'SR', 'ISR', 'MUR', 'P', 'B', 'V', 'FG', 'HM', 'ME', 'T_0', 'T_1', 'T_2', 'T_3']
+        self.labels = ['FP', 'SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
         self.labeltoidx = dict(zip(self.labels, range(len(self.labels))))
         self.core = ['FP', 'SR', 'ISR', 'MUR', 'P', 'B']
-        self.secondary = ['V', 'FG', 'HM', 'ME']
-        self.tension = ['T_0', 'T_1', 'T_2', 'T_3']
+        self.secondary = ['NV','V', 'FG', 'HM', 'ME']
+        self.tension = ['T']
         self.sep28k_labels = ['Unsure', 'PoorAudioQuality', 'Prolongation', 'Block', 'SoundRep', 'WordRep', 'DifficultToUnderstand',
                               'Interjection', 'NoStutteredWords', 'NaturalPause', 'Music', 'NoSpeech']
 
@@ -16,11 +17,11 @@ class LabelMap(object):
         return self.labels.get(label, None)
 
     def __dict__(self):
-        return self.labels
+        return self.labeltoidx
 
     def strfromsep28k(self, sep28k_label):
         sep28k_label = (np.array(sep28k_label)>=2).astype(int)
-        core = '+'.join([self.sep28k_labels[i] for i in range(sep28k_label) if sep28k_label[i] == 1])
+        core = '+'.join(set([self.sep28k_labels[i] for i in range(len(sep28k_label)) if sep28k_label[i] == 1])).replace('NoStutteredWords+', '').replace('+NoStutteredWords', '')
         return core
      
     def strfromlabel(self, label_array):
@@ -30,26 +31,65 @@ class LabelMap(object):
         return f'{core};{secondary};{tension}'
     
     def labelfromstr(self, label_str):
-        label_str = label_str.replace(' ', '').replace('_', '0').replace(':', ';').replace(',', ';').replace('++', '+').replace('SE', 'SR')
-        pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+)(?:[+;](?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+))*)(?:;(\d))?'
+        # strip spaces tabs and newlines from the label string
+        label_original= label_str
+        replacements = {
+            '!':'1',
+            # ' ': '',
+            
+            ':': ';',
+            ',': ';',
+            # '\t': '',
+            # '\n': '',
+            '.': ';',
+            'O': '0',
+            'RS': 'SR',
+            'IISR': 'ISR',
+            'EM': 'ME',
+            'GH': 'FG',
+            'FR' : 'FG',
+            'SE' : 'SR',
+            'BISR': 'B+ISR',
+            'FGV': 'FG+V',
+            'VFG': 'V+FG',
+            'PSR': 'P+SR',
+            'PFG': 'P+FG',
+            'V_0': 'V;0',
+            '_': '',
+        }
+        for key, value in replacements.items():
+            label_str = label_str.replace(key, value)
+
+        # label_str = label_str.upper().replace(' ', '').replace('_', '0').replace(':', ';').replace(',', ';').replace('++', '+').replace('SE', 'SR').replace('\t', '').replace('\n', '').replace('.',';').replace('O','0').replace('RS','SR').replace('IISR','ISR').replace('EM','ME').replace('GH','FG')
+        # pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+)(?:[+;](?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+))*)(?:;(\d))$'
+        # pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+)(?:[+;](?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+))*)(?:;[^;\d]*)*;(\d)$'
+        # pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;\d]+)(?:[+;]SR|ISR|MUR|P|B|V|FG|HM|ME|[^;]+)*)(?:;(\d))?$'        # pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+)(?:;[^;\d]*)*);(\d)$'
+        # if label_str starts with ; append 0
+
+        if label_str.endswith(';'): label_str = label_str + '0'
+        pattern = r"^(?:;)*(.*?)(?:;(\d))?$"
         matches = re.findall(pattern, label_str)
         label_array = [0] * len(self.labels)
-        
+        if not matches:
+            print(f'No matches found for {label_str}', file=open('label_errors.log', 'a'))
+            return label_array
         for match in matches:
             behavior, tension = match
             behavior = re.split(r'[+;]', behavior)
+            behavior = [b for b in behavior if b and not b.isdigit()]
             for b in behavior:
                 # b = b.lower()
                 try:
                     label_array[self.labeltoidx[b]] = 1
                 except KeyError:
-                    print(f'Unknown abbreviation found: {b}, skipping...')
+                    print(f'Unknown abbreviation found: {b} from {label_original}', file=open('label_errors.log', 'a'))
             if tension:
                 try:
-                    label_array[self.labeltoidx[f'T_{tension}']] = 1
+                    tension = int(tension)
+                    label_array[self.labeltoidx['T']] = tension
                 except KeyError:
-                    print(f'Unknown tension value found: {tension}, skipping...')
-
+                    print(f'Unknown tension value found: {tension} from {label_original}', file=open('label_errors.log', 'a'))
+            print(f'label: {label_original} Behavior: {behavior} tension: {tension} label: {label_array}', file=open('labels_found.log', 'a'))
         return label_array
 
 def clean_element(element):

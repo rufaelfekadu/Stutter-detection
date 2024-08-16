@@ -134,8 +134,9 @@ class BCELoss(nn.Module):
 
 class BCELossWithLogits(nn.BCEWithLogitsLoss):
     def __init__(self, **kwargs):
-        weights = kwargs.get('weights', [1, 1, 1, 1, 0.9, 0.7])
         super(BCELossWithLogits, self).__init__(weight=torch.tensor(kwargs.get('weights', None)))
+        print(f'Using BCELossWithLogits with weights: {kwargs.get("weights", None)}')
+        
     def forward(self, y_pred, y_true):
         return super().forward(y_pred, y_true)
     

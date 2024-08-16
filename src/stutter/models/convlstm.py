@@ -97,7 +97,7 @@ class ConvLSTM(nn.Module):
         
     def forward(self, x, tasks=['t1', 't2']):
         
-        x = x.permute(0, 2, 1)
+        # x = x.permute(0, 2, 1)
 
         x = x.unsqueeze(1)
         x = self.conv_module(x)
@@ -132,5 +132,5 @@ if __name__ == '__main__':
     }
     model = ConvLSTM(**kwargs)
     print(model)
-    x = torch.randn(32, 40, 301)
+    x = torch.randn(32, 301, 40)
     t1_out, t2_out = model(x)

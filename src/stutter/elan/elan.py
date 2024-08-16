@@ -6,12 +6,219 @@ import pandas as pd
 import re
 import json
 from stutter.utils.annotation import LabelMap, clean_element
+import matplotlib.pyplot as plt
+import sys
+import numpy as np
+import pympi
 
+def jaccard_similarity(vec1, vec2):
+    intersection = np.sum(np.minimum(vec1, vec2))
+    union = np.sum(np.maximum(vec1, vec2))
+    return intersection / union
+
+def hamming_distance(vec1, vec2):
+    return np.sum(vec1 != vec2)/len(vec1)
+
+class EafGroup(pympi.Elan.Eaf):
+
+    tier_names = ['Stuttering moments', 'stuttering moments', 'stuttering_moments', 'Stuttering_Moments', 'stuttering moment', 'Stuttering moment', 'stuttering_moment', 'Stuttering_Moment', 'gold']
+
+    def __init__(self, elan_files, sep28k_files=None, tier_names=None, gold_available=False):
+        super().__init__()
+
+        if tier_names:
+            self.tier_names = tier_names
+        
+        self.eaf_files = []
+        self.annotation_counts = {}
+        self.label_map = LabelMap()
+        self.annotators = []
+        self.to_merge = []
+        for i,elan_file in enumerate(elan_files):
+            if i==0:
+                # get the media file
+                self.media_file = os.path.basename(elan_file).replace('.eaf','.wav')
+                self.add_linked_file(self.media_file, mimetype='audio/wav', relpath=self.media_file)
+                self.add_linked_file(self.media_file.replace('.wav','.mp4'), mimetype='video/mp4', relpath=self.media_file.replace('.wav','.mp4'))
+            else:
+                assert self.media_file == os.path.basename(elan_file).replace('.eaf','.wav'), 'Media file should be the same for all elan files'
+
+            annotator_id = re.search(r'/(A\d+|gold)', elan_file).group(1)
+            if annotator_id == 'gold':
+                self.copy_gold_tier(pympi.Elan.Eaf(elan_file), 'gold')
+                continue
+            self.annotators.append(annotator_id)
+            # print(f'Processing {annotator_id}')
+            
+            try:
+                eaf_file = pympi.Elan.Eaf(elan_file)
+                tier_name = [tier for tier in self.tier_names if tier in eaf_file.get_tier_names()][0]
+                self.copy_to_new_tier(eaf_file, tier_name=tier_name, prefix=annotator_id)
+                self.annotation_counts[annotator_id] = len(eaf_file.get_annotation_data_for_tier(tier_name))
+                self.eaf_files.append(eaf_file)
+            except Exception as e:
+                print(f'No stuttering tier found in {elan_file} {e}')
+
+        self.to_merge = [i for i in self.tiers.keys() if any(tier_name in i for tier_name in self.tier_names)]
+
+        # _, dissagreement_count = self.merge_tiers_by_dist(self.to_merge, 'disagreement')
+
+        if sep28k_files:
+            self.add_sep28k(sep28k_files)
+
+        self.remove_tier('default')
+    # def copy_gold_tier(self, eaf, tier_name):
+    #     # tier_dict = {}
+    #     # tier_dict['TIER_ID'] = 'gold'
+    #     # tier_dict['LINGUISTIC_TYPE_REF'] = 'default-lt'
+    #     # self.add_tier('gold', tier_dict=tier_dict)
+    #     self.merge_tiers_by_dist(self.to_merge, 'gold')
+    #     try:
+    #         for annotation in eaf.get_annotation_data_for_tier('agreement'):
+    #             self.add_annotation('gold', annotation[0], annotation[1], annotation[2])
+    #         for annotation in eaf.get_annotation_data_for_tier('disagreement'):
+    #             if "/" in annotation[2]:
+    #                 continue
+    #             self.add_annotation('gold', annotation[0], annotation[1], annotation[2])
+            
+    #     except:
+    #         print(f'Tier {'agreement'} not found in {eaf}')
+        
+    def copy_to_new_tier(self, eaf, tier_name, prefix):
+        try:
+            tier_dict = {}
+            tier_dict['TIER_ID'] = prefix 
+            tier_dict['LINGUISTIC_TYPE_REF'] = 'default-lt'
+            self.add_tier(prefix, tier_dict=tier_dict)
+            for annotation in eaf.get_annotation_data_for_tier(tier_name):
+                self.add_annotation(prefix , annotation[0], annotation[1], annotation[2])
+        except Exception as e:
+            print(f'Tier {tier_name} not found in {eaf}: {e}')
+            
+    def add_disagreement_tier(self, tiers, tiernew, gapt=10, sep='/', safe=True, dist_threshold=0.16):
+        if tiernew is None:
+            tiernew = u'{}_merged'.format('_'.join(tiers))
+        self.add_tier(tiernew)
+        aa = [(sys.maxsize, sys.maxsize, None)] + sorted((
+            a for t in tiers for a in self.get_annotation_data_for_tier(t)),
+            reverse=True)
+        l = None
+        disagreement_count = 0
+        dists = []
+        while aa:
+            begin, end, value = aa.pop()
+            if l is None:
+                l = [begin, end, [value]]
+            elif begin - l[1] >= gapt:
+                if not safe or l[1] > l[0]:
+                    labels = [self.label_map.labelfromstr(l[2][i])[:6] for i in range(len(l[2]))]
+                    dist = np.array([self.calc_dist(a,b) for a in labels for b in labels])>dist_threshold
+                    # similarity_matrix = np.array([[hamming_distance(a, b) for b in labels] for a in labels])
+                    # dists.append(similarity_matrix)
+                    # if np.any(similarity_matrix < dist_threshold)and len(labels)>1:
+                    #     self.add_annotation(tiernew, l[0], l[1], sep.join(l[2]))
+                        # disagreement_count += 1
+                        
+                    if  np.count_nonzero(dist==0)<=(len(dist)//2) and len(labels)>1:
+                        self.add_annotation(tiernew, l[0], l[1], sep.join(l[2]))
+                        # disagreement_count += 1
+                l = [begin, end, [value]]
+            else:
+                if end > l[1]:
+                    l[1] = end
+                l[2].append(value)
+        return tiernew, disagreement_count
+    
+    def add_agreement_tier(self, tiers, tiernew, gapt=10, sep='/', safe=True):
+        if tiernew is None:
+            tiernew = u'{}_merged'.format('_'.join(tiers))
+        self.add_tier(tiernew)
+        aa = [(sys.maxsize, sys.maxsize, None)] + sorted((
+            a for t in tiers for a in self.get_annotation_data_for_tier(t)),
+            reverse=True)
+        l = None
+        agreement_count = 0
+        dists = []
+        while aa:
+            begin, end, value = aa.pop()
+            if l is None:
+                l = [begin, end, [value]]
+            elif begin - l[1] >= gapt:
+                if not safe or l[1] > l[0]:
+                    labels = [self.label_map.labelfromstr(l[2][i])[:6] for i in range(len(l[2]))]
+                    dist = np.array([self.calc_dist(a,b) for a in labels for b in labels])>dist_threshold
+                    # similarity_matrix = np.array([[hamming_distance(a, b) for b in labels] for a in labels])
+                    # dists.append(similarity_matrix)
+                    # if np.any(similarity_matrix < dist_threshold)and len(labels)>1:
+                    #     self.add_annotation(tiernew, l[0], l[1], sep.join(l[2]))
+                        # disagreement_count += 1
+                        
+                    if  np.count_nonzero(dist==0)>(len(dist)//2) and len(labels)>1:
+                        self.add_annotation(tiernew, l[0], l[1], sep.join(l[2]))
+                        agreement_count += 1
+                l = [begin, end, [value]]
+            else:
+                if end > l[1]:
+                    l[1] = end
+                l[2].append(value)
+        return tiernew, agreement_count
+    
+    def add_gold_tier(self):
+        pass
+
+    @staticmethod
+    def calc_dist(x,y):
+        return sum([np.abs(a-b) for a,b in zip(x,y)])/len(x)
+    
+    def add_sep28k(self, csv_files):
+        if not self.media_file:
+            raise ValueError('Media file not set please add elan files first')
+        
+        df_sep = pd.read_csv(csv_files[0])
+        df_sep_episodes = pd.read_csv(csv_files[1], header=None)
+
+        df_sep['annotation'] = df_sep.iloc[:, 5:].apply(lambda row: self.label_map.strfromsep28k(row.to_list()), axis=1)
+        df_sep = df_sep[~df_sep['annotation'].isin(['', 'NoStutteredWords'])]
+
+        df_sep_episodes[2] = df_sep_episodes[2].apply(lambda x: x.split('/')[-1].replace('.mp4', '.wav'))
+        episode_map = {row[2]: row[3] for row in df_sep_episodes.itertuples()}
+        df_sep['item'] = df_sep['EpId'].map(episode_map)
+        df_sep = df_sep[df_sep['item']==self.media_file]
+
+        # update the start and end times from segment to time in ms with fs=16000
+        df_sep[['start_time','end_time']] = df_sep[['Start','Stop']].apply(lambda x: x*1000/16000).astype(int)
+
+        df_sep = df_sep[['start_time', 'end_time', 'annotation']]
+        df_sep['annotator_id'] = 'sep28k'
+        df_sep['media_file'] = self.media_file
+        # drop row if null value in row
+        df_sep.dropna(inplace=True)
+        tier_dict = {'TIER_ID': 'sep28k', 'LINGUISTIC_TYPE_REF': 'default-lt'}
+        self.add_tier('sep28k', tier_dict=tier_dict)
+        for row in df_sep.itertuples():
+            self.add_annotation('sep28k', row.start_time, row.end_time, row.annotation)
+       
+        # _= self.merge_tiers(['sep28k'], 'sep28k_merged')
+        # self.remove_tier('sep28k')
+
+    def to_dataframe(self):
+        df = pd.DataFrame()
+        for tier in self.annotators:
+            temp_df = pd.DataFrame()
+            annotations = self.get_annotation_data_for_tier(tier)
+            temp_df['anotator'] = [tier]*len(annotations)
+            temp_df = pd.concat([temp_df, pd.DataFrame(annotations, columns=['start', 'end', 'label'])], axis=1)
+            label = temp_df['label'].apply(lambda x: self.label_map.labelfromstr(x))
+            for i in range(len(self.label_map.labels)):
+                temp_df[self.label_map.labels[i]] = label.apply(lambda x: x[i])
+            df = pd.concat([df, temp_df]).reset_index(drop=True)
+        df['media_file'] = self.media_file
+        return df
+    
 class ELANGroup(object):
     
     def __init__(self, elan_files, save_path=None, label_tier_name='stuttering moments', sep28k=None):
 
-        
         self.media_file = None
         self.annotations = None
         self.gold_ann = None
@@ -44,6 +251,7 @@ class ELANGroup(object):
         df_sep_episodes = pd.read_csv(csv_files[1], header=None)
 
         df_sep['annotation'] = df_sep.iloc[:, 5:].apply(lambda row: self.label_map.strfromsep28k(row.to_list()), axis=1)
+        df_sep = df_sep[~df_sep['annotation'].isin(['', 'NoStutteredWords'])]
 
         df_sep_episodes[2] = df_sep_episodes[2].apply(lambda x: x.split('/')[-1].replace('.mp4', '.wav'))
         episode_map = {row[2]: row[3] for row in df_sep_episodes.itertuples()}
@@ -54,6 +262,8 @@ class ELANGroup(object):
         df_sep[['start_time','end_time']] = df_sep[['Start','Stop']].apply(lambda x: x*1000/16000).astype(int)
 
         df_sep = df_sep[['start_time', 'end_time', 'annotation']]
+        df_sep['annotator_id'] = 'sep28k'
+        df_sep['media_file'] = self.media_file
         # drop row if null value in row
         df_sep.dropna(inplace=True)
 
@@ -267,9 +477,9 @@ class ELAN(object):
 if __name__ == "__main__":
 
     # walk through the fluencybank directory and get all the elan files
-    file_path = 'datasets/fluencybank/our_annotations/'
+    file_path = 'datasets/fluencybank/our_annotations/interview/'
     combined_save_path = 'outputs/fluencybank/combined_files/'
-    csv_save_path = 'outputs/fluencybank/our_annotations.csv'
+    csv_save_path = 'outputs/fluencybank/our_annotations/our_annotations.csv'
 
     elanfiles = {}
     for root, dirs, files in os.walk(file_path):
@@ -281,22 +491,39 @@ if __name__ == "__main__":
                     elanfiles[file].append(os.path.join(root, file))
     
     anns = pd.DataFrame()
+    sep_28k_ann = pd.DataFrame()
     failed = {}
     for key, value in elanfiles.items():
         if len(value)==1:
             continue
         print(f'Processing {key}')
         elan_group = ELANGroup(value, 
-                            #    save_path=combined_save_path+key, 
-                            #    sep28k=('datasets/fluencybank/fluencybank_labels.csv', 'datasets/fluencybank/fluencybank_episodes.csv')
+                               save_path=combined_save_path+key, 
+                               sep28k=('datasets/fluencybank/fluencybank_labels.csv', 'datasets/fluencybank/fluencybank_episodes.csv')
                                )
         ann = elan_group.extract_labels()
+        
         # failed[key] = [(f.annotator_id, f.failed) for f in elan_group.elans]
         anns = pd.concat([anns, ann])
-    # print the number of annotated events per item per annotator
-    print(anns.groupby(['media_file', 'annotator_id']).size())
-    # with open('outputs/fluencybank/failed_annotations.json', 'w') as f:
-    #     json.dump(failed, f)
+        if elan_group.sep28k is not None:
+            sep_28k_ann = pd.concat([sep_28k_ann, elan_group.sep28k])
+
+    groupped_ann = anns.groupby(['media_file', 'annotator_id']).size().reset_index(name='counts')
+    groupped_sep28k_ann = sep_28k_ann.groupby(['media_file', 'annotator_id']).size().reset_index(name='counts')
+
+    merged_df = pd.merge(groupped_ann, groupped_sep28k_ann, on=['media_file', 'annotator_id'], how='outer').fillna(0)
+
+    fig, ax = plt.subplots()
+    width=0.35
+    ax.bar(merged_df['media_file'], merged_df['counts_x'], width, label='Our Annotations')
+    ax.bar(merged_df['media_file'], merged_df['counts_y'], width, label='SEP-28k')
+    ax.set_ylabel('Counts')
+    ax.set_title('Annotation Counts')
+    # rotate x labels
+    plt.xticks(rotation=90)
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig('outputs/fluencybank/interview.png')
 
     # anns.to_csv(csv_save_path, index=False)
 

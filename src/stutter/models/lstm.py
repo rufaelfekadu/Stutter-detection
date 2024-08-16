@@ -15,7 +15,7 @@ class LSTMModel(nn.Module):
 
     def forward(self, x: torch.Tensor, tasks=['t1', 't2']):
 
-        x = x.permute(0, 2, 1)
+        # x = x.permute(0, 2, 1)
 
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
@@ -42,7 +42,7 @@ if __name__ == "__main__":
         'dropout': 0.5
         }
     model = LSTMModel(**kwargs)
-    x = torch.rand(32, 40, 301)
+    x = torch.rand(32, 301, 40)
     t1_out, t2_out = model(x)
     print(t1_out.shape, t2_out.shape)
     print(model)

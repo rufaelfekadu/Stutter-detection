@@ -17,14 +17,14 @@ solver:
   device: 'cuda'
   scheduler: 'plateau'
   factor: 0.5
-  patience: 10
+  patience: 50
   min_lr: 1e-5
-  losses: ['focal']
+  losses: ['bce']
   log_steps: 20
   eval_steps: 20
 
 loss:
-  weights: [0.96, 0.98, 0.95, 0.94, 0.85, 0.1] # weights for bce loss
+  # weights: [0.96, 0.98, 0.95, 0.94, 0.8, 0.4] # weights for bce loss
   alpha: [0.96, 0.96, 0.96, 0.96, 0.7, 0.6] # alpha for focal loss
   reduction: 'mean'
   gamma: 2

@@ -46,7 +46,7 @@ if __name__ == "__main__":
         'dropout': 0.5
         }
     model = LSTMExt(**kwargs)
-    x = torch.rand(32, 40, 301)
+    x = torch.rand(32, 301, 40)
     t1_out, t2_out = model(x)
     print(t1_out.shape, t2_out.shape)
     print(model)
