@@ -23,7 +23,7 @@ class EafGroup(pympi.Elan.Eaf):
 
     tier_names = ['Stuttering moments', 'stuttering moments', 'stuttering_moments', 'Stuttering_Moments', 'stuttering moment', 'Stuttering moment', 'stuttering_moment', 'Stuttering_Moment', 'gold']
 
-    def __init__(self, elan_files, sep28k_files=None, tier_names=None, gold_available=False):
+    def __init__(self, elan_files, sep28k_files=None, tier_names=None):
         super().__init__()
 
         if tier_names:
@@ -42,12 +42,13 @@ class EafGroup(pympi.Elan.Eaf):
                 self.add_linked_file(self.media_file.replace('.wav','.mp4'), mimetype='video/mp4', relpath=self.media_file.replace('.wav','.mp4'))
             else:
                 assert self.media_file == os.path.basename(elan_file).replace('.eaf','.wav'), 'Media file should be the same for all elan files'
-
-            annotator_id = re.search(r'/(A\d+|gold)', elan_file).group(1)
-            if annotator_id == 'gold':
-                self.copy_gold_tier(pympi.Elan.Eaf(elan_file), 'gold')
+            try:
+                annotator_id = re.search(r'/(A\d+|gold)', elan_file).group(1)
+                self.annotators.append(annotator_id)
+            except:
+                print(f'Annotator id not found in {elan_file}')
                 continue
-            self.annotators.append(annotator_id)
+            
             # print(f'Processing {annotator_id}')
             
             try:
@@ -83,7 +84,8 @@ class EafGroup(pympi.Elan.Eaf):
             
     #     except:
     #         print(f'Tier {'agreement'} not found in {eaf}')
-        
+
+ 
     def copy_to_new_tier(self, eaf, tier_name, prefix):
         try:
             tier_dict = {}
@@ -146,7 +148,7 @@ class EafGroup(pympi.Elan.Eaf):
             elif begin - l[1] >= gapt:
                 if not safe or l[1] > l[0]:
                     labels = [self.label_map.labelfromstr(l[2][i])[:6] for i in range(len(l[2]))]
-                    dist = np.array([self.calc_dist(a,b) for a in labels for b in labels])>dist_threshold
+                    dist = np.array([self.calc_dist(a,b) for a in labels for b in labels])>0.16
                     # similarity_matrix = np.array([[hamming_distance(a, b) for b in labels] for a in labels])
                     # dists.append(similarity_matrix)
                     # if np.any(similarity_matrix < dist_threshold)and len(labels)>1:
@@ -161,6 +163,17 @@ class EafGroup(pympi.Elan.Eaf):
                 if end > l[1]:
                     l[1] = end
                 l[2].append(value)
+
+            try:
+                for annotation in self.get_annotation_data_for_tier('agreement'):
+                    self.add_annotation('Gold', annotation[0], annotation[1], annotation[2])
+                for annotation in self.get_annotation_data_for_tier('disagreement'):
+                    if "/" in annotation[2]:
+                        continue
+                    self.add_annotation('Gold', annotation[0], annotation[1], annotation[2])
+            except:
+                print(f'Tier agreement not found in {self}')
+
         return tiernew, agreement_count
     
     def add_gold_tier(self):
@@ -201,9 +214,11 @@ class EafGroup(pympi.Elan.Eaf):
         # _= self.merge_tiers(['sep28k'], 'sep28k_merged')
         # self.remove_tier('sep28k')
 
-    def to_dataframe(self):
+    def to_dataframe(self, tiers=None):
+        if not tiers:
+            tiers = self.annotators
         df = pd.DataFrame()
-        for tier in self.annotators:
+        for tier in tiers:
             temp_df = pd.DataFrame()
             annotations = self.get_annotation_data_for_tier(tier)
             temp_df['anotator'] = [tier]*len(annotations)
@@ -213,7 +228,7 @@ class EafGroup(pympi.Elan.Eaf):
                 temp_df[self.label_map.labels[i]] = label.apply(lambda x: x[i])
             df = pd.concat([df, temp_df]).reset_index(drop=True)
         df['media_file'] = self.media_file
-        return df
+        return df['media_file', 'anotator', 'start', 'end', self.label_map.labels]
     
 class ELANGroup(object):
     

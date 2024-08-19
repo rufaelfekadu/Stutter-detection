@@ -18,14 +18,16 @@ def main(args):
     elanfiles = get_eaf_files(args.file_path)
     total_df = pd.DataFrame()
 
-    for _, value in tqdm(elanfiles.items()):
+    for key, value in tqdm(elanfiles.items()):
         if len(value)==1:
             continue
         # print(f'Processing {key}')
         eaf = EafGroup(value, 
                     #    sep28k_files=['datasets/fluencybank/fluencybank_labels.csv', 'datasets/fluencybank/fluencybank_episodes.csv']
                        )
-        # eaf.to_file(args.combined_save_path+key.replace('.eaf','_combined.eaf'))
+        if args.combine:
+            eaf.to_file(args.combined_save_path+key.replace('.eaf','_combined.eaf'))
+            
         temp_df = eaf.to_dataframe()
         total_df = pd.concat([total_df, temp_df])
 
@@ -40,6 +42,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Merge elan files')
     parser.add_argument('--file_path', type=str, default=file_path, help='Path to elan files')
+    parser.add_argument('--combine', type=bool, default=False, help='Combine the elan files')
     parser.add_argument('--combined_save_path', type=str, default=combined_save_path, help='Path to save the combined elan files')
     parser.add_argument('--csv_save_path', type=str, default=csv_save_path, help='Path to save the combined elan files')
     args = parser.parse_args()

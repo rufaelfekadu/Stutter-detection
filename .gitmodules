@@ -1,0 +1,3 @@
+[submodule "annotationmodeling"]
+	path = annotationmodeling
+	url = https://github.com/rufaelfekadu/annotationmodeling.git

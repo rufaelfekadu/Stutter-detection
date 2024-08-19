@@ -27,7 +27,7 @@ class LabelMap(object):
     def strfromlabel(self, label_array):
         core = '+'.join([self.labels[i] for i in range(len(label_array)) if label_array[i] == 1 and self.labels[i] in self.core])
         secondary = '+'.join([self.labels[i] for i in range(len(label_array)) if label_array[i] == 1 and self.labels[i] in self.secondary])
-        tension = ''.join([self.labels[i].split('_')[1] for i in range(len(label_array)) if label_array[i] == 1 and self.labels[i] in self.tension])
+        tension = label_array[self.labeltoidx['T']]  
         return f'{core};{secondary};{tension}'
     
     def labelfromstr(self, label_str):
@@ -54,6 +54,10 @@ class LabelMap(object):
             'VFG': 'V+FG',
             'PSR': 'P+SR',
             'PFG': 'P+FG',
+            'FFG': 'FG',
+            'SRP': 'SR+P',
+            'ISRP': 'ISR+P',
+            'FV+G': 'FG+V',
             'V_0': 'V;0',
             '_': '',
         }
@@ -65,7 +69,7 @@ class LabelMap(object):
         # pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+)(?:[+;](?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+))*)(?:;[^;\d]*)*;(\d)$'
         # pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;\d]+)(?:[+;]SR|ISR|MUR|P|B|V|FG|HM|ME|[^;]+)*)(?:;(\d))?$'        # pattern = r'((?:SR|ISR|MUR|P|B|V|FG|HM|ME|[^;+\d]+)(?:;[^;\d]*)*);(\d)$'
         # if label_str starts with ; append 0
-
+        label_str = label_str.strip().upper()
         if label_str.endswith(';'): label_str = label_str + '0'
         pattern = r"^(?:;)*(.*?)(?:;(\d))?$"
         matches = re.findall(pattern, label_str)

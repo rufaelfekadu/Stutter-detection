@@ -28,9 +28,6 @@ venv/
 # Windows
 Thumbs.db
 
-# tools
-tools/
-
 *config.yml
 
 # egg-info

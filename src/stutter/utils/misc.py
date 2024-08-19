@@ -41,12 +41,12 @@ def setup_exp(cfg):
 
 
 
-def get_eaf_files(path):
+def get_eaf_files(path, ext='.eaf'):
 
     elanfiles = {}
     for root, dirs, files in os.walk(path):
         for file in files:
-            if file.endswith('.eaf'):
+            if file.endswith(ext):
                 if file not in elanfiles:
                     elanfiles[file] = [os.path.join(root, file)]
                 else:
