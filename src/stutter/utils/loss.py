@@ -13,6 +13,12 @@ class CrossEntropyLoss(nn.Module):
         loss = F.cross_entropy(y_pred, y_true)
         return loss
 
+
+class YOHOLoss(nn.Module):
+    def __init__(self, **kwargs):
+        super(YOHOLoss, self).__init__()
+    def forward(self, y_pred, y_true):
+        raise NotImplementedError
 class CrossEntropyLossWithReg(nn.Module):
     def __init__(self, model, reg_coeff=0.01):
         super(CrossEntropyLossWithReg, self).__init__()
