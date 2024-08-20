@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -18,7 +19,12 @@ class YOHOLoss(nn.Module):
     def __init__(self, **kwargs):
         super(YOHOLoss, self).__init__()
     def forward(self, y_pred, y_true):
-        raise NotImplementedError
+        ind = np.max(y_true[:,2:],axis=1) 
+        y_pred[:,0:2]  = y_pred[:,0:2] * np.repeat(ind[:,np.newaxis], repeats=2, axis=1)
+        loss = F.mse_loss(y_pred, y_true)
+        return loss
+    
+
 class CrossEntropyLossWithReg(nn.Module):
     def __init__(self, model, reg_coeff=0.01):
         super(CrossEntropyLossWithReg, self).__init__()
