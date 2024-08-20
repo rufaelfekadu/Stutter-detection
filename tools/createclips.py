@@ -66,12 +66,15 @@ def check_label(start, end, label, max_duration=30, sr=16000):
     
 def get_frames_for_audio(audio_path, clip_dir, label_path, label_df):
 
+    if len(label_df) == 0:
+        return
     # Create output directory if it doesn't exist
     os.makedirs(clip_dir, exist_ok=True)
     os.makedirs(label_path, exist_ok=True)
     
     # vad = webrtcvad.Vad(3)
     audio, sr = librosa.load(audio_path, sr=16000)
+
     assert sr == 16000, 'Sample rate should be 16000'
 
     label = expand_label(label_df, sr, audio.shape[0])
@@ -105,7 +108,7 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df):
         # write to a text file
         with open(os.path.join(label_path, f'{i}.txt'), 'w') as f:
             for  row in temp_df:
-                f.write(f'<{round(round(row[0] / 0.2) * 0.2,1)}> <stutter> <{round(round(row[1] / 0.2) * 0.2,1)}> ')
+                f.write(f'<{row[0]}> <stutter> <{row[1]}> ')
                 
         
 def process_wav_file(wav_path, args):
@@ -120,7 +123,7 @@ def process_wav_file(wav_path, args):
 
 if __name__ == "__main__":
 
-    output_path = 'outputs/fluencybank/ds/reading/'
+    output_path = 'outputs/fluencybank/ds/reading/train/'
     ds_path = 'datasets/fluencybank/wavs/reading/'
     label_csv = 'datasets/fluencybank/csv/train/reading_train.csv'
     anotator = 'A3'
