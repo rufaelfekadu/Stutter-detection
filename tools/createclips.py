@@ -12,6 +12,10 @@ import pandas as pd
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 
+np.random.seed(0)
+
+label_columns = ['FP','SR','ISR','MUR','P','B']
+
 def check_voiced(mini_frames, vad):
     voiced = [False]*len(mini_frames)
     for i,frame in enumerate(mini_frames):
@@ -28,19 +32,19 @@ def check_voiced_librosa(audio, sr):
     return sum(voiced_flag)/len(voiced_flag) > 0.3
 
 def check_intersects(row, start_time, end_time):
-    if row['start']>= start_time and row['end']<=end_time:
+    if (row['start']>= start_time or row['end']<=end_time) and (row['start']<end_time and row['end']>start_time):
         return row['start']/1000, row['end']/1000, row.iloc[4:-1].values
     return None
 
 def expand_label(df, sr, audio_length):
     starts = df['start'].values
     ends = df['end'].values
-    label = np.clip(np.sum(df.iloc[:,4:-1].values, axis=1), a_max=1, a_min=0)
+    label = np.clip(np.sum(df[label_columns].values, axis=1), a_max=1, a_min=0)
     labels = np.zeros(audio_length)
     for i in range(len(starts)):
         start = int(starts[i]*sr/1000)
         end = int(ends[i]*sr/1000)
-        labels[start:end] = label[i]
+        labels[start:end+1] = label[i]
     return labels
 
 def chunk_audio(audio_length, sr, chunk_duration=25, stride_duration=5):
@@ -54,6 +58,7 @@ def check_label(start, end, label, max_duration=30, sr=16000):
 
     if start < 0 or end >= len(label):
         return start if start >= 0 else 0, end if end < len(label) else len(label)
+    
     if label[start]==0 and label[end]==0:
         return start, end
     if label[start]==1:
@@ -64,7 +69,7 @@ def check_label(start, end, label, max_duration=30, sr=16000):
     return check_label(start, end, label)
 
     
-def get_frames_for_audio(audio_path, clip_dir, label_path, label_df):
+def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length=20, stride_duration=5):
 
     if len(label_df) == 0:
         return
@@ -78,8 +83,8 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df):
     assert sr == 16000, 'Sample rate should be 16000'
 
     label = expand_label(label_df, sr, audio.shape[0])
-    starts, stops = chunk_audio(audio.shape[0], sr)
-
+    starts, stops = chunk_audio(audio.shape[0], sr, chunk_duration=clip_length, stride_duration=stride_duration)
+    num_labels = []
     for i, (start, stop) in enumerate(zip(starts, stops)):
         # check if the chunk is voiced
         # if not check_voiced_librosa(audio[start:stop], sr):
@@ -90,40 +95,48 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df):
             continue
 
         # check if the chunk is between start and stop of any label
-        new_start, new_stop = check_label(start, stop, label)
+        # new_start, new_stop = check_label(start, stop, label)
 
-        if new_stop - new_start > 480000:
-            print(f'Skipping {i} as it is more than 30 seconds {new_stop - new_start}')
-            continue
+        # if new_stop - new_start > 480000:
+        #     print(f'Skipping {i} as it is more than 30 seconds {new_stop - new_start}')
+        #     continue
+
+        new_start, new_stop = start, stop
 
         clip_path = os.path.join(clip_dir, f'{i}.wav')
         clip = audio[new_start:new_stop]
         sf.write(clip_path, clip, sr)
-
         temp_df = label_df.apply(lambda row: check_intersects(row, (new_start/sr)*1000, (new_stop/sr)*1000), axis=1)
         temp_df = temp_df.dropna()
+        num_labels.append(len(temp_df))
 
         # write the label to json file
         # temp_df.to_json(os.path.join(label_path, f'{i}.json'))
         # write to a text file
         with open(os.path.join(label_path, f'{i}.txt'), 'w') as f:
-            for  row in temp_df:
-                f.write(f'<{row[0]}> <stutter> <{row[1]}> ')
-                
+            temp_df = temp_df.sort_values()
+            for row in temp_df:
+                # get the start and end of the label relative to the chunk
+                start_l = max(0, row[0] - new_start/sr)
+                end_l = min(new_stop/sr - new_start/sr, row[1] - new_start/sr)
+                f.write(f'<{start_l}> <stutter> <{end_l}> ')
+
+    return num_labels
         
 def process_wav_file(wav_path, args):
     audio_path = os.path.join(args.ds_path, wav_path)
-    clip_path = os.path.join(args.output_path, 'clips', wav_path.split('.')[0])
-    label_path = os.path.join(args.output_path, 'label', wav_path.split('.')[0])
+    clip_path = os.path.join(args.output_path, args.anotator, 'clips', wav_path.split('.')[0])
+    label_path = os.path.join(args.output_path, args.anotator, 'label', wav_path.split('.')[0])
     label_df = pd.read_csv(args.label_csv)
     label_df = label_df[label_df['media_file'] == wav_path]
     label_df = label_df[label_df['anotator'] == args.anotator]
-    get_frames_for_audio(audio_path, clip_path, label_path, label_df=label_df)
-
+    clip_length = np.random.randint(20, 30)
+    num_labels = get_frames_for_audio(audio_path, clip_path, label_path, label_df=label_df, clip_length=clip_length)
+    return wav_path, num_labels
 
 if __name__ == "__main__":
 
-    output_path = 'outputs/fluencybank/ds/reading/train/'
+    output_path = 'outputs/fluencybank/ds/reading_primary/train/'
     ds_path = 'datasets/fluencybank/wavs/reading/'
     label_csv = 'datasets/fluencybank/csv/train/reading_train.csv'
     anotator = 'A3'
@@ -134,13 +147,19 @@ if __name__ == "__main__":
     parser.add_argument('--anotator', type=str, default=anotator)
     args = parser.parse_args()
 
+    num_labels = {}
     with ThreadPoolExecutor() as executor:
+
         futures = []
         for wav_path in os.listdir(args.ds_path):
             futures.append(executor.submit(process_wav_file, wav_path, args))
         
         # Optionally, wait for all futures to complete
         for future in futures:
-            future.result()
+            path, res = future.result()
+            num_labels[path] = res
+    
+    import pprint
+    pprint.pprint(num_labels, indent=4)
 
         
