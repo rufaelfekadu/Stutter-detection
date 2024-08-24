@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 np.random.seed(0)
 
-label_columns = ['FP','SR','ISR','MUR','P','B']
+label_columns = ['FP','SR','ISR','MUR','P','B', 'V', 'FG', 'HM', 'ME', 'T']
 
 def check_voiced(mini_frames, vad):
     voiced = [False]*len(mini_frames)
@@ -84,17 +84,19 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length
 
     label = expand_label(label_df, sr, audio.shape[0])
     starts, stops = chunk_audio(audio.shape[0], sr, chunk_duration=clip_length, stride_duration=stride_duration)
+    result = {}
     num_labels = []
     for i, (start, stop) in enumerate(zip(starts, stops)):
-        # check if the chunk is voiced
+
+        # # check if the chunk is voiced
         # if not check_voiced_librosa(audio[start:stop], sr):
         #     continue
 
-        # check if the chunk has any labels
+        # # check if the chunk has no labels
         if not np.any(label[start:stop]):
             continue
 
-        # check if the chunk is between start and stop of any label
+        # # check if the chunk is between start and stop of any label
         # new_start, new_stop = check_label(start, stop, label)
 
         # if new_stop - new_start > 480000:
@@ -116,12 +118,16 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length
         with open(os.path.join(label_path, f'{i}.txt'), 'w') as f:
             temp_df = temp_df.sort_values()
             for row in temp_df:
-                # get the start and end of the label relative to the chunk
                 start_l = max(0, row[0] - new_start/sr)
                 end_l = min(new_stop/sr - new_start/sr, row[1] - new_start/sr)
                 f.write(f'<{start_l}> <stutter> <{end_l}> ')
 
-    return num_labels
+    result['num_labels'] = num_labels
+    result['num_clips'] = len(num_labels)
+    result['clip_length'] = clip_length
+    result['stride_duration'] = stride_duration
+
+    return result
         
 def process_wav_file(wav_path, args):
     audio_path = os.path.join(args.ds_path, wav_path)
@@ -131,13 +137,13 @@ def process_wav_file(wav_path, args):
     label_df = label_df[label_df['media_file'] == wav_path]
     label_df = label_df[label_df['anotator'] == args.anotator]
     clip_length = np.random.randint(20, 30)
-    num_labels = get_frames_for_audio(audio_path, clip_path, label_path, label_df=label_df, clip_length=clip_length)
-    return wav_path, num_labels
+    result = get_frames_for_audio(audio_path, clip_path, label_path, label_df=label_df, clip_length=clip_length)
+    return wav_path, result
 
 if __name__ == "__main__":
 
-    output_path = 'outputs/fluencybank/ds/reading_primary/train/'
-    ds_path = 'datasets/fluencybank/wavs/reading/'
+    output_path = 'datasets/fluencybank/ds/reading_all/train/'
+    ds_path = 'datasets/fluencybank/wavs_original/reading/'
     label_csv = 'datasets/fluencybank/csv/train/reading_train.csv'
     anotator = 'A3'
     parser = argparse.ArgumentParser()
@@ -147,7 +153,7 @@ if __name__ == "__main__":
     parser.add_argument('--anotator', type=str, default=anotator)
     args = parser.parse_args()
 
-    num_labels = {}
+    results = {}
     with ThreadPoolExecutor() as executor:
 
         futures = []
@@ -157,9 +163,21 @@ if __name__ == "__main__":
         # Optionally, wait for all futures to complete
         for future in futures:
             path, res = future.result()
-            num_labels[path] = res
+            if res is not None:
+                results[path] = res
     
-    import pprint
-    pprint.pprint(num_labels, indent=4)
+    # dump the results to a json file with indentation
+    import json
+    with open(args.output_path + 'results.json', 'w') as f:
+        json.dump(results, f, indent=4)
+
+    # plot the distribution of number of labels
+    import matplotlib.pyplot as plt
+    plt.hist([x['num_labels'] for x in results.values()], bins=20)
+    plt.ylabel('Number of clips')
+    plt.xlabel('Number of labels')
+    plt.savefig(args.output_path + 'num_labels_dis.png')
+    
+
 
         
