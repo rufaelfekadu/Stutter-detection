@@ -10,6 +10,10 @@ from stutter.utils.data import load_audio_files
 from stutter.utils.data import logmelfilterbank
 import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler
+from transformers import AutoFeatureExtractor
+from glob import glob
+from pathlib import Path
+import soundfile as sf
 
 class ScaleTransform:
     def __init__(self, scaler=MinMaxScaler()):
@@ -25,6 +29,37 @@ class ScaleTransform:
         x = x.reshape(n, -1)
         self.scaler.fit(x)
         return self
+
+class FluencyBankYOHO(Dataset):
+    __acceptable_params = ['root', 'label_path', 'ckpt', 'name', 'n_mels', 'win_length', 'hop_length', 'n_fft', 'test_recording']
+
+    def __init__(self, transforms=None, save=True, **kwargs):
+        [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
+        self.audio_splits = glob(f'{self.root}/clips/*/*.wav')
+        self.text_splits = glob(f'{self.root}/label/*/yohos/*.txt')
+        assert len(self.audio_splits) == len(self.text_splits), f"Number of audio {len(self.audio_splits)} and text {len(self.text_splits)} splits do not match"
+        self.transform = AutoFeatureExtractor.from_pretrained("openai/whisper-base", cache_dir="/tmp/")
+    
+    def __len__(self):
+        return len(self.audio_splits)
+
+    def __getitem__(self, idx):
+        audio_path = self.audio_splits[idx]
+        audio_file = audio_path.split('/')[-2]
+        sample_id = audio_path.split('/')[-1].split('.')[0]
+        txt_path = f"{self.root}/label/{audio_file}/yohos/{sample_id}.txt"
+        wav,sr = sf.read(audio_path)
+        audio_features = self.transform(wav,sampling_rate=sr)
+        labels = np.loadtxt(txt_path, delimiter=" ")
+        if len(labels) == 0:
+            labels = np.zeros((10,14))
+        else:
+            labels = np.pad(labels, ((0, 10 - len(labels)), (0, 0)), 'constant', constant_values=0)
+        return {
+            "mel_spec": audio_features,
+            "label": labels
+        }
+
 
 class FluencyBank(Dataset):
 
@@ -140,7 +175,7 @@ class FluencyBankSlow(Dataset):
 
 if __name__ == "__main__":
     kwargs = {
-        'root': 'datasets/fluencybank/new_clips/',
+        'root': '/fsx/homes/Hawau.Toyin@mbzuai.ac.ae/Stutter-detection/datasets/fluencybank/ds_sentence/reading/A3',
         'label_path': 'outputs/fluencybank/fluencybank_labels_new_split.csv',
         'ckpt': 'outputs/fluencybank/',
         'name': 'fluencybank',
@@ -148,5 +183,6 @@ if __name__ == "__main__":
         'win_length': 400,
         'hop_length': 160,
     }
-    dataset = FluencyBank(**kwargs)
+    dataset = FluencyBankYOHO(**kwargs)
+    
     print(dataset[0])
