@@ -4,7 +4,7 @@ import xml.dom.minidom
 import os
 import pandas as pd
 import re
-import json
+from collections import Counter
 from stutter.utils.annotation import LabelMap, clean_element
 import matplotlib.pyplot as plt
 import sys
@@ -19,73 +19,147 @@ def jaccard_similarity(vec1, vec2):
 def hamming_distance(vec1, vec2):
     return np.sum(vec1 != vec2)/len(vec1)
 
+def select_majority_values(lists):
+    # Transpose the list of lists to group elements by their positions
+    transposed = list(zip(*lists))
+    
+    # Find the majority element for each group
+    majority_values = []
+    for group in transposed:
+        # Get the most common element
+        most_common = Counter(group).most_common(1)[0][0]
+        majority_values.append(most_common)
+    
+    return majority_values
+
 class EafGroup(pympi.Elan.Eaf):
+    stuttering_tier_names = ['stuttering moments', 'Stuttering moments', 'stuttering_moments', 'Stuttering_moments',]
 
-    tier_names = ['Stuttering moments', 'stuttering moments', 'stuttering_moments', 'Stuttering_Moments', 'stuttering moment', 'Stuttering moment', 'stuttering_moment', 'Stuttering_Moment', 'gold']
-
-    def __init__(self, elan_files, sep28k_files=None, tier_names=None):
+    def __init__(self, stuttering_tier_names=None):
         super().__init__()
-
-        if tier_names:
-            self.tier_names = tier_names
+        if stuttering_tier_names:
+            self.stuttering_tier_names = stuttering_tier_names
         
         self.eaf_files = []
         self.annotation_counts = {}
         self.label_map = LabelMap()
         self.annotators = []
-        self.to_merge = []
+        self.media_file = None
+
+        self.remove_tier('default')
+    
+    def initialize_from_files(self, elan_files, sep28k_annotations=None):
+        '''
+            Initialize the EafGroup from a list of elan files paths
+            input:
+                elan_files: list of elan file paths
+                sep28k_files(optional): list of sep28k files paths
+        '''
+
         for i,elan_file in enumerate(elan_files):
-            if i==0:
-                # get the media file
-                self.media_file = os.path.basename(elan_file).replace('.eaf','.wav')
-                self.add_linked_file(self.media_file, mimetype='audio/wav', relpath=self.media_file)
-                self.add_linked_file(self.media_file.replace('.wav','.mp4'), mimetype='video/mp4', relpath=self.media_file.replace('.wav','.mp4'))
-            else:
-                assert self.media_file == os.path.basename(elan_file).replace('.eaf','.wav'), 'Media file should be the same for all elan files'
+
+            if not self.media_file:
+                self.media_file = os.path.basename(elan_file).replace('.eaf','')
+                self.add_linked_file(self.media_file+'.wav', mimetype='audio/wav', relpath=self.media_file+'.wav')
+                self.add_linked_file(self.media_file+'.mp4', mimetype='video/mp4', relpath=self.media_file+'.mp4')
+                
+            assert self.media_file == os.path.basename(elan_file).replace('.eaf',''), 'Media file should be the same for all elan files'
+
+            eaf = pympi.Elan.Eaf(elan_file)
+            tier_names = eaf.get_tier_names()
+            par_tier = next((tier for tier in ['PAR', 'ADU'] if tier in tier_names), None)
+            inv_tier = next((tier for tier in ['INT', 'INV'] if tier in tier_names), None)
+
+            # add participant tier from the first elan file
+            if not par_tier in self.get_tier_names() and par_tier:
+                self.add_tier('PAR', tier_dict={'TIER_ID': 'PAR', 'LINGUISTIC_TYPE_REF': 'default-lt'})
+                for annotation in eaf.get_annotation_data_for_tier(par_tier):
+                    if annotation[0] is None:
+                        self.add_annotation('PAR', 0, annotation[1], annotation[2])
+                    else:
+                        self.add_annotation('PAR', annotation[0], annotation[1], annotation[2])
+
+            # add Interviewer tier from the first elan file
+            if not inv_tier in self.get_tier_names() and inv_tier:
+                self.add_tier('INV', tier_dict={'TIER_ID': 'INV', 'LINGUISTIC_TYPE_REF': 'default-lt'})
+                for annotation in eaf.get_annotation_data_for_tier(inv_tier):
+                    start_time = annotation[0] if annotation[0] else 0
+                    end_time = annotation[1] if annotation[1] else 0
+                    if annotation[0] is None or annotation[1] is None:
+                        print(f'Invalid annotation {annotation} in {elan_file}')
+                    else:
+                        self.add_annotation('INV', start_time, end_time, annotation[2])
+
+            
             try:
-                annotator_id = re.search(r'/(A\d+|gold)', elan_file).group(1)
+                annotator_id = re.search(r'/(A\d)', elan_file).group(1)
                 self.annotators.append(annotator_id)
             except:
                 print(f'Annotator id not found in {elan_file}')
                 continue
-            
-            # print(f'Processing {annotator_id}')
-            
+        
+            # add the annotator tier
             try:
-                eaf_file = pympi.Elan.Eaf(elan_file)
-                tier_name = [tier for tier in self.tier_names if tier in eaf_file.get_tier_names()][0]
-                self.copy_to_new_tier(eaf_file, tier_name=tier_name, prefix=annotator_id)
-                self.annotation_counts[annotator_id] = len(eaf_file.get_annotation_data_for_tier(tier_name))
-                self.eaf_files.append(eaf_file)
+                tier_name = [tier for tier in self.stuttering_tier_names if tier in eaf.get_tier_names()][0]
+                self.copy_to_new_tier(eaf, tier_name=tier_name, prefix=annotator_id)
             except Exception as e:
-                print(f'No stuttering tier found in {elan_file} {e}')
+                print(f'No stuttering tier found in {elan_file} {e} skipping')
 
-        self.to_merge = [i for i in self.tiers.keys() if any(tier_name in i for tier_name in self.tier_names)]
+        # add agreement and disagreement tier
+        self.add_disagreement_agreement_tier(self.annotators)
 
-        # _, dissagreement_count = self.merge_tiers_by_dist(self.to_merge, 'disagreement')
+        # add sep28k tier
+        if sep28k_annotations is not None:
+            self.add_sep28k(sep28k_annotations)
+    
+    def initialize_from_file(self, file):
+        '''
+            Initialize the EafGroup from a single elan file
+            input:
+                file: elan file path
+        '''
+        eaf = pympi.Elan.Eaf(file)
+        # set media file
+        self.media_file = os.path.basename(file).replace('.eaf','')
+        self.add_linked_file(self.media_file+'.wav', mimetype='audio/wav', relpath=self.media_file+'.wav')
+        self.add_linked_file(self.media_file+'.mp4', mimetype='video/mp4', relpath=self.media_file+'.mp4')
 
-        if sep28k_files:
-            self.add_sep28k(sep28k_files)
+        # add participant tier
+        tier_names = eaf.get_tier_names()
+        try:
+            par_tier = next((tier for tier in ['PAR', 'ADU'] if tier in tier_names), None)
+            self.add_tier('PAR', tier_dict={'TIER_ID': 'PAR', 'LINGUISTIC_TYPE_REF': 'default-lt'})
+            for annotation in eaf.get_annotation_data_for_tier(par_tier):
+                if annotation[0] is None:
+                    self.add_annotation('PAR', 0, annotation[1], annotation[2])
+                else:
+                    self.add_annotation('PAR', annotation[0], annotation[1], annotation[2])
+        except Exception as e:
+            print(f'Participant tier not found in {eaf}: {e}')
+        
+        try:
+            inv_tier = next((tier for tier in ['INT', 'INV'] if tier in tier_names), None)
+            self.add_tier('INV', tier_dict={'TIER_ID': 'INV', 'LINGUISTIC_TYPE_REF': 'default-lt'})
+            for annotation in eaf.get_annotation_data_for_tier(inv_tier):
+                if annotation[0] is None:
+                    self.add_annotation('INV', 0, annotation[1], annotation[2])
+                else:
+                    self.add_annotation('INV', annotation[0], annotation[1], annotation[2])
+        except Exception as e:
+            print(f'Interviewer tier not found in {eaf}: {e}')
 
-        self.remove_tier('default')
-    # def copy_gold_tier(self, eaf, tier_name):
-    #     # tier_dict = {}
-    #     # tier_dict['TIER_ID'] = 'gold'
-    #     # tier_dict['LINGUISTIC_TYPE_REF'] = 'default-lt'
-    #     # self.add_tier('gold', tier_dict=tier_dict)
-    #     self.merge_tiers_by_dist(self.to_merge, 'gold')
-    #     try:
-    #         for annotation in eaf.get_annotation_data_for_tier('agreement'):
-    #             self.add_annotation('gold', annotation[0], annotation[1], annotation[2])
-    #         for annotation in eaf.get_annotation_data_for_tier('disagreement'):
-    #             if "/" in annotation[2]:
-    #                 continue
-    #             self.add_annotation('gold', annotation[0], annotation[1], annotation[2])
-            
-    #     except:
-    #         print(f'Tier {'agreement'} not found in {eaf}')
+        self.annotators = re.findall(r'(A\d)', ','.join(tier_names))
+        for annotator in self.annotators:
+            self.copy_to_new_tier(eaf, tier_name=annotator, prefix=annotator)
+        
+        self.annotators.append('Gold')
+        self.add_tier('Gold', tier_dict={'TIER_ID': 'Gold', 'LINGUISTIC_TYPE_REF': 'default-lt'})
+        try:
+            for annotation in eaf.get_annotation_data_for_tier('agreement'):
+                self.add_annotation('Gold', annotation[0], annotation[1], annotation[2])
+        except:
+            print(f'Tier agreement not found in {eaf}')
 
- 
     def copy_to_new_tier(self, eaf, tier_name, prefix):
         try:
             tier_dict = {}
@@ -97,16 +171,17 @@ class EafGroup(pympi.Elan.Eaf):
         except Exception as e:
             print(f'Tier {tier_name} not found in {eaf}: {e}')
             
-    def add_disagreement_tier(self, tiers, tiernew, gapt=10, sep='/', safe=True, dist_threshold=0.16):
-        if tiernew is None:
-            tiernew = u'{}_merged'.format('_'.join(tiers))
-        self.add_tier(tiernew)
+    def add_disagreement_agreement_tier(self, tiers, gapt=10, sep='/', safe=True, dist_threshold=0.16):
+        
+        self.add_tier("disagreement", tier_dict={'TIER_ID': 'disagreement', 'LINGUISTIC_TYPE_REF': 'default-lt'})
+        self.add_tier("agreement", tier_dict={'TIER_ID': 'agreement', 'LINGUISTIC_TYPE_REF': 'default-lt'})
+        ''''
+            Method taken from pympi
+        '''
         aa = [(sys.maxsize, sys.maxsize, None)] + sorted((
             a for t in tiers for a in self.get_annotation_data_for_tier(t)),
             reverse=True)
         l = None
-        disagreement_count = 0
-        dists = []
         while aa:
             begin, end, value = aa.pop()
             if l is None:
@@ -114,23 +189,21 @@ class EafGroup(pympi.Elan.Eaf):
             elif begin - l[1] >= gapt:
                 if not safe or l[1] > l[0]:
                     labels = [self.label_map.labelfromstr(l[2][i])[:6] for i in range(len(l[2]))]
-                    dist = np.array([self.calc_dist(a,b) for a in labels for b in labels])>dist_threshold
-                    # similarity_matrix = np.array([[hamming_distance(a, b) for b in labels] for a in labels])
-                    # dists.append(similarity_matrix)
-                    # if np.any(similarity_matrix < dist_threshold)and len(labels)>1:
-                    #     self.add_annotation(tiernew, l[0], l[1], sep.join(l[2]))
-                        # disagreement_count += 1
-                        
+                    dist = np.array([self.calc_dist(a,b) for a in labels for b in labels])>dist_threshold 
                     if  np.count_nonzero(dist==0)<=(len(dist)//2) and len(labels)>1:
-                        self.add_annotation(tiernew, l[0], l[1], sep.join(l[2]))
+                        self.add_annotation('disagreement', l[0], l[1], sep.join(l[2]))
+                    else:
+                        labels = [self.label_map.labelfromstr(l[2][i])for i in range(len(l[2]))]
+                        labels = select_majority_values(labels)
+                        self.add_annotation('agreement', l[0], l[1], self.label_map.strfromlabel(labels))
                         # disagreement_count += 1
                 l = [begin, end, [value]]
             else:
                 if end > l[1]:
                     l[1] = end
                 l[2].append(value)
-        return tiernew, disagreement_count
     
+    # TOBE REMOVED
     def add_agreement_tier(self, tiers, tiernew, gapt=10, sep='/', safe=True):
         if tiernew is None:
             tiernew = u'{}_merged'.format('_'.join(tiers))
@@ -175,9 +248,6 @@ class EafGroup(pympi.Elan.Eaf):
                 print(f'Tier agreement not found in {self}')
 
         return tiernew, agreement_count
-    
-    def add_gold_tier(self):
-        pass
 
     @staticmethod
     def calc_dist(x,y):
@@ -219,17 +289,20 @@ class EafGroup(pympi.Elan.Eaf):
             tiers = self.annotators
         df = pd.DataFrame()
         for tier in tiers:
+            if not tier in self.get_tier_names():
+                print(f'Tier {tier} not found in {self}')
+                continue
             temp_df = pd.DataFrame()
             annotations = self.get_annotation_data_for_tier(tier)
-            temp_df['anotator'] = [tier]*len(annotations)
+            temp_df['annotator'] = [tier]*len(annotations)
             temp_df = pd.concat([temp_df, pd.DataFrame(annotations, columns=['start', 'end', 'label'])], axis=1)
             label = temp_df['label'].apply(lambda x: self.label_map.labelfromstr(x))
             for i in range(len(self.label_map.labels)):
                 temp_df[self.label_map.labels[i]] = label.apply(lambda x: x[i])
             df = pd.concat([df, temp_df]).reset_index(drop=True)
         df['media_file'] = self.media_file
-        return df['media_file', 'anotator', 'start', 'end', self.label_map.labels]
-    
+        return df[['media_file', 'annotator', 'start', 'end', 'label']+ self.label_map.labels]
+
 class ELANGroup(object):
     
     def __init__(self, elan_files, save_path=None, label_tier_name='stuttering moments', sep28k=None):
