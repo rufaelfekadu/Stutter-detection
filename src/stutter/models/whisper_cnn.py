@@ -29,6 +29,8 @@ class WhisperDetector(nn.Module):
             (5, 1, 64),
             (5, 2, 36),
             (3, 1, 14),
+            (3, 2, 14),
+            
         ]
         self.input_conv = nn.Sequential(
             nn.Conv1d(in_channels=self.embed_features, out_channels=256, kernel_size=5, stride=1, padding=1),
@@ -49,7 +51,10 @@ class WhisperDetector(nn.Module):
             )
 
             self.layers.append(depthwise)
-            in_channels = num_filters        
+            in_channels = num_filters       
+        
+        self.max_pool = nn.MaxPool1d(kernel_size=3, stride=2)
+        # self.fc2 = nn.Linear(512, 140)
     
     def forward(self, x):
         # x ->  (batch_size, num_mels, seq_len) (batch_size, 80, 3000)
@@ -62,6 +67,8 @@ class WhisperDetector(nn.Module):
         
         for layer in self.layers:
             x = layer(x)
+            
+        x = self.max_pool(x)
         return x
         
 model = WhisperDetector()
