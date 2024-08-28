@@ -17,11 +17,12 @@ from pyannote.core import Segment
 import torch
 import random
 import json
+from tqdm import tqdm
 
 np.random.seed(0)
 random.seed(0)
 
-lock = threading.Lock()
+# lock = threading.Lock()
 label_columns = ['FP','SR','ISR','MUR','P','B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
 
 def check_voiced(mini_frames, vad):
@@ -41,8 +42,8 @@ def check_voiced_librosa(audio, sr):
 
 def check_intersects(row, start_time, end_time):
     if row['start'] <= end_time and row['end']>=start_time:
-        return True
-    return False
+        return row
+    return None
 
 def check_intersects_strict(row, start_time, end_time):
     if row['start'] >= start_time and row['end']<=end_time:
@@ -60,7 +61,7 @@ def expand_label(df, sr, audio_length):
         labels[start:end+1] = label[i]
     return labels
 
-def chunk_audio(audio_length, sr, chunk_duration=25, stride_duration=5):
+def chunk_audio(audio_length, sr, chunk_duration=10, stride_duration=5):
     chunk_samples = sr * chunk_duration
     stride_samples = sr * stride_duration
     starts = np.arange(0, audio_length - chunk_samples + 1, stride_samples)
@@ -88,13 +89,12 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length
     # Create output directory if it doesn't exist
     os.makedirs(clip_dir, exist_ok=True)
     # os.makedirs(label_path, exist_ok=True)
-    os.makedirs(os.path.join(label_path,'uems'), exist_ok=True)
-    os.makedirs(os.path.join(label_path,'rttms'), exist_ok=True)
-    os.makedirs(os.path.join(label_path,'txts'), exist_ok=True)
-    os.makedirs(os.path.join(label_path,'jsons'), exist_ok=True)
-    os.makedirs(os.path.join(label_path,'yohos'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'uem'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'rttm'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'txt'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'json'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'yoho'), exist_ok=True)
     
-    # vad = webrtcvad.Vad(3)
     file_name = os.path.basename(audio_path).split('.')[0]
     audio, sr = librosa.load(audio_path, sr=16000)
     assert sr == 16000, 'Sample rate should be 16000'
@@ -103,49 +103,30 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length
     starts, stops = chunk_audio(audio.shape[0], sr, chunk_duration=clip_length, stride_duration=stride_duration)
     result = {}
     num_labels = []
+    total_df = pd.DataFrame()
     for i, (start, stop) in enumerate(zip(starts, stops)):
 
-        # # check if the chunk is voiced
-        # if not check_voiced_librosa(audio[start:stop], sr):
-        #     continue
-
-        # # check if the chunk has no labels
-        # if not np.any(label[start:stop]):
-        #     continue
-
-        # # check if the chunk is between start and stop of any label
-        # new_start, new_stop = check_label(start, stop, label)
-
-        new_start, new_stop = start, stop
         duration = (stop - start)/sr
         clip_path = os.path.join(clip_dir, f'{file_name}_{i}.wav')
+
+        assert duration == clip_length, f'Clip duration is {duration}'
 
         # check if the clip is already created
         if not os.path.exists(clip_path):
             clip = audio[start:stop]
             sf.write(clip_path, clip, sr)
-
-        temp_df = label_df.apply(lambda row: check_intersects(row, (new_start/sr)*1000, (new_stop/sr)*1000), axis=1)
-        temp_df = temp_df.dropna()
+        
+        # temp_df = label_df.apply(lambda row: check_intersects(row, (start/sr)*1000, (stop/sr)*1000), axis=1)
+        temp_df = label_df[(label_df['start'] <= (stop / sr) * 1000) & (label_df['end'] >= (start / sr) * 1000)]
         num_labels.append(len(temp_df))
+        temp_df['clip_id'] = i
+        temp_df['clip_start'] = (start/sr) * 1000
+        temp_df['clip_end'] = (stop/sr) * 1000
+        reord_cols = ['media_file', 'clip_id', 'clip_start', 'clip_end', 'annotator', 'start', 'end'] + label_columns
+        temp_df = temp_df[reord_cols]
+        total_df = pd.concat([total_df, temp_df], ignore_index=True, axis=0)
 
-        # write to a text file for whisper
-        with open(os.path.join(label_path, 'txts', f'{i}.txt'), 'w') as f:
-            temp_df = temp_df.sort_values()
-            for row in temp_df:
-                start_l = max(0, (row[0]/1000) - start/sr)
-                end_l = min(duration, (row[1]/1000) - (start/sr))
-                l = ' '.join([str(x) for x in row[2:]])
-                f.write(f'{start_l} {end_l} {l}\n')
-
-        # write the label to a json file for whispercnn
-        with open(os.path.join(label_path, f'{i}.json'), 'w') as f:
-            temp_df = temp_df.sort_values()
-            for row in temp_df.iterrows():
-                start_l = max(0, row[1]['start'] - new_start/sr)
-                end_l = min(new_stop/sr - new_start/sr, row[1]['end'] - new_start/sr)
-                f.write(f'{{"start": {start_l}, "end": {end_l}, "label": {row[1].iloc[4:-1].values.tolist()}}}\n')
-                
+    result['total_df'] = total_df
     result['num_labels'] = num_labels
     result['num_clips'] = len(num_labels)
     result['clip_length'] = clip_length
@@ -155,30 +136,36 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length
         
 def process_wav_file(wav_path, args):
     audio_path = os.path.join(args.ds_path, wav_path)
-    clip_path = os.path.join(args.output_path, args.anotator, 'clips', wav_path.split('.')[0])
-    label_path = os.path.join(args.output_path, args.anotator, 'label', wav_path.split('.')[0])
+    clip_path = os.path.join(args.output_path, 'clips', wav_path.split('.')[0])
+    label_path = os.path.join(args.output_path, 'label', wav_path.split('.')[0])
     label_df = pd.read_csv(args.label_csv)
-    label_df = label_df[label_df['media_file'] == wav_path]
-    label_df = label_df[label_df['anotator'] == args.anotator]
-    clip_length = np.random.randint(20, 30)
-    result = get_frames_for_audio(audio_path, clip_path, label_path, label_df=label_df, clip_length=clip_length)
+    label_df = label_df[label_df['media_file'] == wav_path.split('.')[0]]
+    # label_df = label_df[label_df['annotator'] == args.anotator]
+    # clip_length = np.random.randint(20, 30)
+    result = get_frames_for_audio(audio_path, clip_path, label_path, label_df=label_df, clip_length=args.clip_length, stride_duration=args.stride_duration)
     return wav_path, result
 
-def create_clips_constant_stride(args):
+def create_clips_strided(args):
 
     results = {}
     with ThreadPoolExecutor() as executor:
-
         futures = []
         for wav_path in os.listdir(args.ds_path):
             futures.append(executor.submit(process_wav_file, wav_path, args))
         
-        # Optionally, wait for all futures to complete
         for future in futures:
             path, res = future.result()
             if res is not None:
                 results[path] = res
     
+    total_df = pd.DataFrame()
+    for key, value in results.items():
+        sub_total_df = value['total_df']
+        total_df = pd.concat([total_df, sub_total_df])
+        value.pop('total_df')
+        
+    total_df.to_csv(args.output_path + 'total_df.csv', index=False)
+
     # dump the results to a json file with indentation
     import json
     with open(args.output_path + 'results.json', 'w') as f:
@@ -191,7 +178,6 @@ def create_clips_constant_stride(args):
     plt.xlabel('Number of labels')
     plt.savefig(args.output_path + 'num_labels_dis.png')
 
-
 def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_df, pipeline):
 
     '''
@@ -200,8 +186,6 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
 
     if len(label_df) == 0:
         return
-    
-    
     
     # Create output directory if it doesn't exist
     os.makedirs(clip_dir, exist_ok=True)
@@ -368,7 +352,7 @@ def create_clips_from_transcript(args):
     results = {}
     with ThreadPoolExecutor() as executor:
         futures = []
-        for wav_path in os.listdir(args.ds_path):
+        for wav_path in tqdm(os.listdir(args.ds_path)):
             futures.append(executor.submit(process_wav_files_transcript, wav_path, args, pipeline))
         
         # Optionally, wait for all futures to complete
@@ -396,10 +380,10 @@ def create_clips_from_transcript(args):
 
 if __name__ == "__main__":
 
-    output_path = 'datasets/fluencybank/ds_sentence/reading/'
-    ds_path = 'datasets/fluencybank/wavs_original/reading/'
-    label_csv = 'datasets/fluencybank/new_annotations/reading/csv/labels.csv'
-    clip_csv = 'datasets/fluencybank/new_annotations/reading/csv/transcripts.csv'
+    output_path = 'datasets/fluencybank/ds_10/reading/'
+    ds_path = 'datasets/fluencybank/wavs/reading/'
+    label_csv = 'datasets/fluencybank/our_annotations/reading/csv/labels.csv'
+    clip_csv = 'datasets/fluencybank/our_annotations/reading/csv/transcripts.csv'
     anotator = 'A3'
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_path', type=str, default=output_path)
@@ -408,12 +392,12 @@ if __name__ == "__main__":
     parser.add_argument('--clip_csv', type=str, default=clip_csv)
     parser.add_argument('--anotator', type=str, default=anotator)
     parser.add_argument('--stride_duration', type=int, default=5)
-    parser.add_argument('--clip_length', type=int, default=20)
-    parser.add_argument('--method', type=str, default='constant_stride', values=['constant_stride', 'transcript', 'vad'])
+    parser.add_argument('--clip_length', type=int, default=10)
+    parser.add_argument('--method', type=str, default='constant_stride')
     args = parser.parse_args()
 
     if args.method == 'constant_stride':
-        create_clips_constant_stride(args)
+        create_clips_strided(args)
     elif args.method == 'transcript':
         create_clips_from_transcript(args)
     else:
