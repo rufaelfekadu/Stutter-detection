@@ -15,12 +15,20 @@ class CrossEntropyLoss(nn.Module):
         return loss
 
 
+# class YOHOLoss(nn.Module):
+#     def __init__(self, **kwargs):
+#         super(YOHOLoss, self).__init__()
+#     def forward(self, y_pred, y_true):
+#         ind = np.max(y_true[:,2:],axis=1) 
+#         y_pred[:,0:2]  = y_pred[:,0:2] * np.repeat(ind[:,np.newaxis], repeats=2, axis=1)
+#         loss = F.mse_loss(y_pred, y_true)
+#         return loss
 class YOHOLoss(nn.Module):
     def __init__(self, **kwargs):
         super(YOHOLoss, self).__init__()
     def forward(self, y_pred, y_true):
-        ind = np.max(y_true[:,2:],axis=1) 
-        y_pred[:,0:2]  = y_pred[:,0:2] * np.repeat(ind[:,np.newaxis], repeats=2, axis=1)
+        ind = torch.max(y_true[:,:,2:],axis=2)[0] 
+        y_pred[:,:,0:2]  = y_pred[:,:,0:2] * torch.repeat_interleave(ind[:,:,None], repeats=2, dim=2)
         loss = F.mse_loss(y_pred, y_true)
         return loss
     
@@ -156,7 +164,8 @@ loss_registery = {
     'ccc': CCCLoss,
     'ce': CrossEntropyLoss,
     'focal': FocalLossMultiClass,
-    'bce': BCELossWithLogits
+    'bce': BCELossWithLogits,
+    'yoho': YOHOLoss
 }
 
 def build_loss(cfg):

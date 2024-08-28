@@ -4,10 +4,11 @@ from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
 import numpy as np
 from tqdm import tqdm
 
+from stutter.utils.annotation import LabelMap
 from stutter.data import get_dataloaders
 from stutter.models import build_model
 from stutter.utils.meters import LossMeter, AverageMeter
-from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER
+from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER, binary_acc, binary_f1
 from stutter.utils.loss import build_loss, CCCLoss
 import librosa
 import matplotlib.pyplot as plt
@@ -20,7 +21,9 @@ metric_bank={
     'f1': f1_score_per_class,
     'f1_macro': f1_score_,
     'wacc': weighted_accuracy,
-    'eer': multilabel_EER
+    'eer': multilabel_EER,
+    'binary_acc': binary_acc,
+    'binary_f1': binary_f1,
 }
 
 class BaseTrainer(object):
@@ -324,6 +327,74 @@ class MTLTrainer(Trainer):
             # log the confusion matrix
             self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
 
+class YohoTrainer(Trainer):
+    def __init__(self, cfg, logger=None, metrics=['acc']):
+        super(YohoTrainer, self).__init__(cfg, logger, metrics = metrics)
+        self.criterion = self.criterion['t2']
+        self.test_preds = []
+        self.test_labels = []
+        self.num_classes = 11
+
+    def parse_batch_train(self, batch):
+        x = batch['mel_spec']
+        y = batch['label']
+        return x.to(self.device), y.to(self.device)
+    
+    def train_step(self, batch):
+        x, y = self.parse_batch_train(batch)
+
+        pred = self.model(x.squeeze(1))
+        loss = self.criterion(pred, y)
+        loss.backward()
+        self.optimizer.step()
+
+        return{
+            't2': loss.item()
+        }
+
+    def test_step(self, batch):
+
+        x, y = self.parse_batch_train(batch)
+        preds = self.model(x.squeeze(1))
+        self.test_preds.append(preds)
+        self.test_labels.append(y)
+        metrics = self.compute_metrics(preds, y)
+
+        return {
+            't2': metrics
+        }
+        
+
+    def val_step(self, batch):
+        x, y = self.parse_batch_train(batch)
+        pred = self.model(x.squeeze(1))
+        loss = self.criterion(pred, y)
+        return{
+            't2': loss.item()
+        }
+    
+    def after_test(self):
+        label_map = LabelMap()
+        preds = torch.concat(self.test_preds, axis=0)
+        labels = torch.concat(self.test_labels, axis=0)
+
+        preds[:,:,2:-1] = (torch.sigmoid(preds[:,:,2:-1]) >= 0.5).int()
+        
+        label_time = labels[:,:,0:2]
+        # visualize the predictions and the label plot the time span and label
+        breakpoint()
+        for i in range(5):
+            events = preds[i,:,:]
+            plt.figure()
+            for j in range(events.size(0)):
+                if (events[j,2:-1] >=0.5)== 1:
+                    plt.plot(events[j,0:2], [1, 1], color='-ro', label=label_map.strfromlabel(events[j,2:]))
+            
+            ground_truth = labels[i,:]
+            for j in range(ground_truth.size(0)):
+                if ground_truth[j] == 1:
+                    plt.plot(label_time[j,0:2], [2, 2], color='-bo', label=label_map.strfromlabel(ground_truth[j,2:]))
+         
 class Wave2vecTrainer(Trainer):
     def __init__(self, cfg, logger=None, metrics=['acc']):
         super(Wave2vecTrainer, self).__init__(cfg, logger, metrics = metrics)
@@ -341,7 +412,8 @@ class Wave2vecTrainer(Trainer):
         
 
 trainer_registery = {
-    'mtl': MTLTrainer
+    'mtl': MTLTrainer,
+    'yoho': YohoTrainer,
 }
 
 def build_trainer(cfg, logger=None, metrics=['f1']):

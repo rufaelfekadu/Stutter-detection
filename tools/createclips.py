@@ -16,6 +16,7 @@ from pyannote.audio import Pipeline
 from pyannote.core import Segment
 import torch
 import random
+import json
 
 np.random.seed(0)
 random.seed(0)
@@ -40,6 +41,11 @@ def check_voiced_librosa(audio, sr):
 
 def check_intersects(row, start_time, end_time):
     if row['start'] <= end_time and row['end']>=start_time:
+        return True
+    return False
+
+def check_intersects_strict(row, start_time, end_time):
+    if row['start'] >= start_time and row['end']<=end_time:
         return True
     return False
 
@@ -81,14 +87,19 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length
         return
     # Create output directory if it doesn't exist
     os.makedirs(clip_dir, exist_ok=True)
-    os.makedirs(label_path, exist_ok=True)
+    # os.makedirs(label_path, exist_ok=True)
+    os.makedirs(os.path.join(label_path,'uems'), exist_ok=True)
+    os.makedirs(os.path.join(label_path,'rttms'), exist_ok=True)
+    os.makedirs(os.path.join(label_path,'txts'), exist_ok=True)
+    os.makedirs(os.path.join(label_path,'jsons'), exist_ok=True)
+    os.makedirs(os.path.join(label_path,'yohos'), exist_ok=True)
     
     # vad = webrtcvad.Vad(3)
+    file_name = os.path.basename(audio_path).split('.')[0]
     audio, sr = librosa.load(audio_path, sr=16000)
-
     assert sr == 16000, 'Sample rate should be 16000'
 
-    label = expand_label(label_df, sr, audio.shape[0])
+    # label = expand_label(label_df, sr, audio.shape[0])
     starts, stops = chunk_audio(audio.shape[0], sr, chunk_duration=clip_length, stride_duration=stride_duration)
     result = {}
     num_labels = []
@@ -99,36 +110,31 @@ def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length
         #     continue
 
         # # check if the chunk has no labels
-        if not np.any(label[start:stop]):
-            continue
+        # if not np.any(label[start:stop]):
+        #     continue
 
         # # check if the chunk is between start and stop of any label
         # new_start, new_stop = check_label(start, stop, label)
 
-        # if new_stop - new_start > 480000:
-        #     print(f'Skipping {i} as it is more than 30 seconds {new_stop - new_start}')
-        #     continue
-
         new_start, new_stop = start, stop
-        clip_path = os.path.join(clip_dir, f'{i}.wav')
+        duration = (stop - start)/sr
+        clip_path = os.path.join(clip_dir, f'{file_name}_{i}.wav')
 
         # check if the clip is already created
         if not os.path.exists(clip_path):
-            clip = audio[new_start:new_stop]
+            clip = audio[start:stop]
             sf.write(clip_path, clip, sr)
 
         temp_df = label_df.apply(lambda row: check_intersects(row, (new_start/sr)*1000, (new_stop/sr)*1000), axis=1)
         temp_df = temp_df.dropna()
         num_labels.append(len(temp_df))
 
-        # write the label to json file
-        # temp_df.to_json(os.path.join(label_path, f'{i}.json'))
         # write to a text file for whisper
-        with open(os.path.join(label_path, f'{i}.txt'), 'w') as f:
+        with open(os.path.join(label_path, 'txts', f'{i}.txt'), 'w') as f:
             temp_df = temp_df.sort_values()
             for row in temp_df:
-                start_l = max(0, row[0] - new_start/sr)
-                end_l = min(new_stop/sr - new_start/sr, row[1] - new_start/sr)
+                start_l = max(0, (row[0]/1000) - start/sr)
+                end_l = min(duration, (row[1]/1000) - (start/sr))
                 l = ' '.join([str(x) for x in row[2:]])
                 f.write(f'{start_l} {end_l} {l}\n')
 
@@ -229,6 +235,12 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
             print(f'Skipping {i} as it is less than 1 second {new_stop - new_start}')
             continue
 
+        # check length of the clip
+        if new_stop - new_start > 30000: # more than 30 seconds
+            print(f'cutting {i} as it is more than 30 seconds {new_stop - new_start}')
+            # cut the clip to 30 seconds
+            new_stop = new_start + 30000
+
         # check if the clip is already created
         if not os.path.exists(clip_path):
             clip = audio[int(new_start*sr/1000):int(new_stop*sr/1000)]
@@ -237,6 +249,7 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
         # get stuttering labels
         label_df['intersects'] = label_df.apply(lambda row: check_intersects(row, new_start, new_stop), axis=1)
         temp_df = label_df[label_df['intersects']]
+        temp_df['clip_id'] = i
         # temp_df = temp_df.dropna()
         num_labels_per_clip.append(len(temp_df))
 
@@ -257,7 +270,7 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
             for row in temp_df.values:
                 start_l = max(0, (row[2] - new_start)/1000)
                 end_l = min(duration/1000, (row[3] - new_start)/1000)
-                l = ' '.join([str(x) for x in row[6:-1]])
+                l = ' '.join([str(x) for x in row[6:-2]])
                 f.write(f'{start_l} {end_l} {l}\n')
 
         # # write the label to a json file for whispercnn
@@ -333,8 +346,8 @@ def process_wav_files_transcript(wav_path, args, pipeline):
     label_df = label_df[label_df['annotator'] == args.anotator]
     
     # if split is test skip
-    if 'split' in label_df.columns and label_df['split'].values[0] == 'test':
-        return wav_path, None
+    # if 'split' in label_df.columns and label_df['split'].values[0] == 'test':
+    #     return wav_path, None
 
     clip_df = pd.read_csv(args.clip_csv)
     clip_df = clip_df[clip_df['media_file'] == file_id]
@@ -368,10 +381,16 @@ def create_clips_from_transcript(args):
     for key, value in results.items():
         sub_total_df = value['total_df']
         total_df = pd.concat([total_df, sub_total_df])
+        value.pop('total_df')
     total_df.to_csv(args.output_path + 'total_df.csv', index=False)
-    print(len(results))
-    # dump the results to a json file with indentation
-    import json
+
+    # plot the distribution of number of labels
+    import matplotlib.pyplot as plt
+    plt.hist([x['num_labels'] for x in results.values()], bins=20)
+    plt.ylabel('Number of clips')
+    plt.xlabel('Number of labels')
+    plt.savefig(args.output_path + 'num_labels_dis.png')
+    
     with open(args.output_path + 'results.json', 'w') as f:
         json.dump(results, f, indent=4)
 
@@ -388,9 +407,18 @@ if __name__ == "__main__":
     parser.add_argument('--label_csv', type=str, default=label_csv)
     parser.add_argument('--clip_csv', type=str, default=clip_csv)
     parser.add_argument('--anotator', type=str, default=anotator)
+    parser.add_argument('--stride_duration', type=int, default=5)
+    parser.add_argument('--clip_length', type=int, default=20)
+    parser.add_argument('--method', type=str, default='constant_stride', values=['constant_stride', 'transcript', 'vad'])
     args = parser.parse_args()
 
-    create_clips_from_transcript(args)
+    if args.method == 'constant_stride':
+        create_clips_constant_stride(args)
+    elif args.method == 'transcript':
+        create_clips_from_transcript(args)
+    else:
+        print('Method not implemented')
+        exit(1)
 
     
     

@@ -6,7 +6,7 @@ _C = CN()
 _C.name = 'stutter-detection'
 _C.seed = 42
 _C.tasks = ['t1']
-_C.setting = 'mtl'
+_C.setting = 'yoho'
 
 
 

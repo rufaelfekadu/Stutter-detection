@@ -13,9 +13,11 @@ import torch.nn.functional as F
 from transformers import AutoFeatureExtractor, WhisperModel
 
 class WhisperDetector(nn.Module):
-    def __init__(self,features_per_sample=1500, embed_features=512, num_classes=14):
+    __acceptable_params = ['name', 'num_classes', 'embed_features']
+    def __init__(self, embed_features=512, num_classes=14, **kwargs):
         super(WhisperDetector, self).__init__()
-        model = WhisperModel.from_pretrained("openai/whisper-base", cache_dir="/tmp/")
+        [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
+        model = WhisperModel.from_pretrained("openai/whisper-base", cache_dir="./outputs")
         self.encoder = model.encoder
         self.embed_features = embed_features
         self.num_classes = num_classes
@@ -29,7 +31,7 @@ class WhisperDetector(nn.Module):
             (5, 1, 64),
             (5, 2, 36),
             (3, 1, 14),
-            (3, 2, 14),
+            # (3, 2, 14),
             
         ]
         self.input_conv = nn.Sequential(
@@ -53,7 +55,7 @@ class WhisperDetector(nn.Module):
             self.layers.append(depthwise)
             in_channels = num_filters       
         
-        self.max_pool = nn.MaxPool1d(kernel_size=3, stride=2)
+        self.max_pool = nn.MaxPool1d(kernel_size=2, stride=2)
         # self.fc2 = nn.Linear(512, 140)
     
     def forward(self, x):
@@ -69,10 +71,14 @@ class WhisperDetector(nn.Module):
             x = layer(x)
             
         x = self.max_pool(x)
+        # permute to (batch_size, seq_len, num_mels)
+        x = x.permute(0, 2, 1)
         return x
-        
-model = WhisperDetector()
-example_input = torch.randn(5, 80, 3000)  # Example input: batch size 1, 1 channel, 801x64
-output = model(example_input)
-print(output.shape)        
+
+if __name__ == "__main__":
+    model = WhisperDetector()
+    example_input = torch.randn(5, 80, 3000)  # Example input: batch size 1, 1 channel, 801x64
+    output = model(example_input)
+    print(output.shape)
+    
         

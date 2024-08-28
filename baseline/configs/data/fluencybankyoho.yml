@@ -1,0 +1,6 @@
+
+data: 
+  name: 'fluencybankyoho'
+  root: 'datasets/fluencybank/ds_sentence/reading/A3'
+  label_path: datasets/fluencybank/new_annotations/reading_split.json
+

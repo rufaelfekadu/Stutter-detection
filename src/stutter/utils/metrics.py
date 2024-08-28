@@ -2,6 +2,36 @@ import torch
 import numpy as np
 from sklearn.metrics import f1_score, roc_curve, multilabel_confusion_matrix
 
+def binary_acc(y_true, y_pred):
+  
+    threshold = 0.5
+
+    binary_true = y_true[:,:,2:-1]
+    binary_pred = y_pred[:,:,2:-1]
+    binary_pred = torch.sigmoid(binary_pred) >= threshold
+    # binary_true = torch.greater_equal(binary_true, threshold)
+    # binary_pred = torch.greater_equal(binary_pred, threshold)
+    # binary_pred = tf.greater(y_pred[:, [0, 2]], threshold)
+
+    # acc = tf.square(y_true - y_pred)
+
+    acc = torch.sum(binary_true == binary_pred).float() / binary_true.numel()
+
+    return acc
+
+def binary_f1(y_true, y_pred):
+    threshold = 0.5
+    binary_true = y_true[:,:,2:-1]
+    binary_pred = y_pred[:,:,2:-1]
+    binary_pred = torch.sigmoid(binary_pred) >= threshold
+    num_classes = binary_true.shape[-1]
+    f1 = []
+    for i in range(num_classes):
+        pred = binary_pred[:,:, i]
+        label = binary_true[:,:, i]
+        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy(), average='macro'))
+    return f1
+
 def EER(predictions, labels):
 
     # if  isinstance(predictions, torch.Tensor):

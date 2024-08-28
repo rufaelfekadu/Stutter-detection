@@ -12,8 +12,8 @@ import torch.nn.functional as F
 from sklearn.preprocessing import MinMaxScaler
 from transformers import AutoFeatureExtractor
 from glob import glob
-from pathlib import Path
 import soundfile as sf
+import json
 
 class ScaleTransform:
     def __init__(self, scaler=MinMaxScaler()):
@@ -31,15 +31,28 @@ class ScaleTransform:
         return self
 
 class FluencyBankYOHO(Dataset):
-    __acceptable_params = ['root', 'label_path', 'ckpt', 'name', 'n_mels', 'win_length', 'hop_length', 'n_fft', 'test_recording']
+    __acceptable_params = ['root', 'label_path', 'ckpt', 'name', 'n_mels', 'win_length', 'hop_length', 'n_fft']
 
-    def __init__(self, transforms=None, save=True, **kwargs):
+    def __init__(self, **kwargs):
         [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
         self.audio_splits = glob(f'{self.root}/clips/*/*.wav')
         self.text_splits = glob(f'{self.root}/label/*/yohos/*.txt')
         assert len(self.audio_splits) == len(self.text_splits), f"Number of audio {len(self.audio_splits)} and text {len(self.text_splits)} splits do not match"
-        self.transform = AutoFeatureExtractor.from_pretrained("openai/whisper-base", cache_dir="/tmp/")
-    
+        self.transform = AutoFeatureExtractor.from_pretrained("openai/whisper-base", cache_dir="./outputs/")
+        
+        with open(self.label_path, 'r') as f:
+            split_data = json.load(f)
+
+        self.split = np.zeros(len(self.audio_splits))
+        for i, audio_path in enumerate(self.audio_splits):
+            audio_file = audio_path.split('/')[-2]
+            if audio_file in split_data['train']:
+                self.split[i] = 0
+            elif audio_file in split_data['val']:
+                self.split[i] = 1
+            else:
+                self.split[i] = 2
+
     def __len__(self):
         return len(self.audio_splits)
 
@@ -52,9 +65,14 @@ class FluencyBankYOHO(Dataset):
         audio_features = self.transform(wav,sampling_rate=sr)
         labels = np.loadtxt(txt_path, delimiter=" ")
         if len(labels) == 0:
-            labels = np.zeros((10,14))
+            labels = np.zeros((22, 14))
         else:
-            labels = np.pad(labels, ((0, 10 - len(labels)), (0, 0)), 'constant', constant_values=0)
+            labels = labels.reshape(-1, 14)
+            labels = np.pad(labels, ((0, 22 - len(labels)), (0, 0)), 'constant', constant_values=0)
+        labels = torch.tensor(labels, dtype=torch.float32)
+        audio_features = torch.tensor(audio_features['input_features'], dtype=torch.float32)
+        # if len(labels) == 0:
+        #     labels = np.zeros((22,14))
         return {
             "mel_spec": audio_features,
             "label": labels
@@ -175,8 +193,8 @@ class FluencyBankSlow(Dataset):
 
 if __name__ == "__main__":
     kwargs = {
-        'root': '/fsx/homes/Hawau.Toyin@mbzuai.ac.ae/Stutter-detection/datasets/fluencybank/ds_sentence/reading/A3',
-        'label_path': 'outputs/fluencybank/fluencybank_labels_new_split.csv',
+        'root': 'datasets/fluencybank/ds_sentence/reading/A3',
+        'label_path': 'datasets/fluencybank/new_annotations/reading_split.json',
         'ckpt': 'outputs/fluencybank/',
         'name': 'fluencybank',
         'n_mels': 40,
@@ -184,5 +202,5 @@ if __name__ == "__main__":
         'hop_length': 160,
     }
     dataset = FluencyBankYOHO(**kwargs)
-    
-    print(dataset[0])
+    for i in range(10):
+        print(dataset[i]['mel_spec']['input_features'].shape, dataset[i]['label'])
