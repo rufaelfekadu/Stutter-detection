@@ -16,11 +16,14 @@ from pyannote.audio import Pipeline
 from pyannote.core import Segment
 import torch
 import random
+import json
+from tqdm import tqdm
+import cv2
 
 np.random.seed(0)
 random.seed(0)
 
-lock = threading.Lock()
+# lock = threading.Lock()
 label_columns = ['FP','SR','ISR','MUR','P','B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
 
 def check_voiced(mini_frames, vad):
@@ -40,6 +43,11 @@ def check_voiced_librosa(audio, sr):
 
 def check_intersects(row, start_time, end_time):
     if row['start'] <= end_time and row['end']>=start_time:
+        return row
+    return None
+
+def check_intersects_strict(row, start_time, end_time):
+    if row['start'] >= start_time and row['end']<=end_time:
         return True
     return False
 
@@ -54,7 +62,7 @@ def expand_label(df, sr, audio_length):
         labels[start:end+1] = label[i]
     return labels
 
-def chunk_audio(audio_length, sr, chunk_duration=25, stride_duration=5):
+def chunk_audio(audio_length, sr, chunk_duration=10, stride_duration=5):
     chunk_samples = sr * chunk_duration
     stride_samples = sr * stride_duration
     starts = np.arange(0, audio_length - chunk_samples + 1, stride_samples)
@@ -75,116 +83,188 @@ def check_label(start, end, label, max_duration=30, sr=16000):
     
     return check_label(start, end, label)
  
-def get_frames_for_audio(audio_path, clip_dir, label_path, label_df, clip_length=20, stride_duration=5):
+def get_frames_for_audio(args, file_name):
 
+    label_df = pd.read_csv(args.label_csv)
+    label_df = label_df[label_df['media_file'] == file_name]
     if len(label_df) == 0:
         return
-    # Create output directory if it doesn't exist
-    os.makedirs(clip_dir, exist_ok=True)
-    os.makedirs(label_path, exist_ok=True)
     
-    # vad = webrtcvad.Vad(3)
-    audio, sr = librosa.load(audio_path, sr=16000)
+    # Create output directory if it doesn't exist
+    audio_clip_dir = os.path.join(args.output_path, 'clips', 'audio', file_name)
+    video_clip_dir = os.path.join(args.output_path, 'clips', 'video', file_name)
+    label_path = os.path.join(args.output_path, 'label', file_name)
 
+    os.makedirs(audio_clip_dir, exist_ok=True)
+    os.makedirs(video_clip_dir, exist_ok=True)
+    os.makedirs(label_path, exist_ok=True)
+
+    # os.makedirs(label_path, exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'uem'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'rttm'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'txt'), exist_ok=True)
+    # os.makedirs(os.path.join(label_path,'json'), exist_ok=True)
+    os.makedirs(os.path.join(label_path,'yoho'), exist_ok=True)
+
+    audio_path = os.path.join(args.ds_path, 'wavs', f'{file_name}.wav')
+    audio, sr = librosa.load(audio_path, sr=16000)
     assert sr == 16000, 'Sample rate should be 16000'
 
-    label = expand_label(label_df, sr, audio.shape[0])
-    starts, stops = chunk_audio(audio.shape[0], sr, chunk_duration=clip_length, stride_duration=stride_duration)
+    # open the video
+    video_path = os.path.join(args.ds_path, 'videos', f'{file_name}.mp4')
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        
+    # label = expand_label(label_df, sr, audio.shape[0])
+    starts, stops = chunk_audio(audio.shape[0], sr, chunk_duration=args.clip_length, stride_duration=args.stride_duration)
     result = {}
     num_labels = []
+    total_df = pd.DataFrame()
     for i, (start, stop) in enumerate(zip(starts, stops)):
 
-        # # check if the chunk is voiced
-        # if not check_voiced_librosa(audio[start:stop], sr):
-        #     continue
+        duration = (stop - start)/sr
+        assert duration == args.clip_length, f'Clip duration is {duration}'
 
-        # # check if the chunk has no labels
-        if not np.any(label[start:stop]):
-            continue
-
-        # # check if the chunk is between start and stop of any label
-        # new_start, new_stop = check_label(start, stop, label)
-
-        # if new_stop - new_start > 480000:
-        #     print(f'Skipping {i} as it is more than 30 seconds {new_stop - new_start}')
-        #     continue
-
-        new_start, new_stop = start, stop
-        clip_path = os.path.join(clip_dir, f'{i}.wav')
-
-        # check if the clip is already created
-        if not os.path.exists(clip_path):
-            clip = audio[new_start:new_stop]
-            sf.write(clip_path, clip, sr)
-
-        temp_df = label_df.apply(lambda row: check_intersects(row, (new_start/sr)*1000, (new_stop/sr)*1000), axis=1)
-        temp_df = temp_df.dropna()
+        # check if the audio clip is already created
+        audio_clip_path = os.path.join(audio_clip_dir, f'{file_name}_{i}.wav')
+        if not os.path.exists(audio_clip_path):
+            clip = audio[start:stop]
+            sf.write(audio_clip_path, clip, sr)
+        
+        # check if the video clip is already created
+        video_clip_path = os.path.join(video_clip_dir, f'{file_name}_{i}.mp4')
+        if not os.path.exists(video_clip_path):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, int(start*fps/sr))
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+            out = cv2.VideoWriter(video_clip_path, fourcc, fps, (width, height))
+            for j in range(int(duration*fps)):
+                ret, frame = cap.read()
+                if ret:
+                    out.write(frame)
+                else:
+                    break
+            out.release()
+        
+        # temp_df = label_df.apply(lambda row: check_intersects(row, (start/sr)*1000, (stop/sr)*1000), axis=1)
+        label_df['stuttering_duration'] = label_df['end']-label_df['start']
+        split = label_df['split'].values[0]
+        percentage = 0.5
+        temp_df = label_df[
+            (label_df['start'] <= ((stop / sr) * 1000) - (label_df['stuttering_duration']*percentage)) & 
+            (label_df['end'] >= ((start / sr) * 1000) + (label_df['stuttering_duration']*percentage))
+            ]
         num_labels.append(len(temp_df))
 
-        # write the label to json file
-        # temp_df.to_json(os.path.join(label_path, f'{i}.json'))
-        # write to a text file for whisper
-        with open(os.path.join(label_path, f'{i}.txt'), 'w') as f:
-            temp_df = temp_df.sort_values()
-            for row in temp_df:
-                start_l = max(0, row[0] - new_start/sr)
-                end_l = min(new_stop/sr - new_start/sr, row[1] - new_start/sr)
-                l = ' '.join([str(x) for x in row[2:]])
-                f.write(f'{start_l} {end_l} {l}\n')
+        if len(temp_df) == 0:
+            temp = dict(zip(label_columns, [0]*len(label_columns)))
+            temp_df = pd.DataFrame([temp], columns=label_columns)
+            temp_df['start'] = np.nan
+            temp_df['end'] = np.nan
+            temp_df['annotator'] = np.nan
+            temp_df['media_file'] = file_name
+            temp_df['label'] = 'no_stutter'
+            temp_df['split'] = split
 
-        # write the label to a json file for whispercnn
-        with open(os.path.join(label_path, f'{i}.json'), 'w') as f:
-            temp_df = temp_df.sort_values()
-            for row in temp_df.iterrows():
-                start_l = max(0, row[1]['start'] - new_start/sr)
-                end_l = min(new_stop/sr - new_start/sr, row[1]['end'] - new_start/sr)
-                f.write(f'{{"start": {start_l}, "end": {end_l}, "label": {row[1].iloc[4:-1].values.tolist()}}}\n')
-                
+        temp_df['clip_id'] = i
+        temp_df['clip_start'] = (start/sr) * 1000
+        temp_df['clip_end'] = (stop/sr) * 1000
+        reord_cols = ['media_file', 'clip_id', 'clip_start', 'clip_end', 'annotator', 'start', 'end', 'label', 'split'] + label_columns
+        temp_df = temp_df[reord_cols]
+        total_df = pd.concat([total_df, temp_df], ignore_index=True, axis=0)
+
+        # write to a text file for whisper
+        with open(os.path.join(label_path,'yoho', f'{file_name}_{i}.txt'), 'w') as f:
+            temp_df = temp_df.sort_values(by='start')
+            for row in temp_df.values:
+                start_l = max(0, (row[5]/1000 - start/sr))
+                end_l = min(duration, (row[6]/1000 - start/sr))
+                if sum(row[9:]) < 1:
+                    continue
+                l = ' '.join([str(x) for x in row[9:]])
+                f.write(f'{round(start_l,2)} {round(end_l,2)} {l}\n')
+
+    result['total_df'] = total_df
     result['num_labels'] = num_labels
     result['num_clips'] = len(num_labels)
-    result['clip_length'] = clip_length
-    result['stride_duration'] = stride_duration
+    result['clip_length'] = args.clip_length
+    result['stride_duration'] = args.stride_duration
 
-    return result
+    return file_name, result
         
-def process_wav_file(wav_path, args):
-    audio_path = os.path.join(args.ds_path, wav_path)
-    clip_path = os.path.join(args.output_path, args.anotator, 'clips', wav_path.split('.')[0])
-    label_path = os.path.join(args.output_path, args.anotator, 'label', wav_path.split('.')[0])
-    label_df = pd.read_csv(args.label_csv)
-    label_df = label_df[label_df['media_file'] == wav_path]
-    label_df = label_df[label_df['anotator'] == args.anotator]
-    clip_length = np.random.randint(20, 30)
-    result = get_frames_for_audio(audio_path, clip_path, label_path, label_df=label_df, clip_length=clip_length)
-    return wav_path, result
+# def process_wav_file(wav_path, args):
+#     clip_path = os.path.join(args.output_path, 'clips')
+#     label_df = pd.read_csv(args.label_csv)
+#     label_df = label_df[label_df['media_file'] == wav_path.split('.')[0]]
+#     result = get_frames_for_audio(ds_path, audio_clip_path, video_label_path, label_df=label_df, video_path= clip_length=args.clip_length, stride_duration=args.stride_duration)
+#     return wav_path, result
 
-def create_clips_constant_stride(args):
+def create_clips_strided(args):
 
     results = {}
     with ThreadPoolExecutor() as executor:
-
         futures = []
-        for wav_path in os.listdir(args.ds_path):
-            futures.append(executor.submit(process_wav_file, wav_path, args))
+        for wav_path in os.listdir(os.path.join(args.ds_path,'wavs')):
+            futures.append(executor.submit(get_frames_for_audio, args, wav_path.split('.')[0]))
         
-        # Optionally, wait for all futures to complete
         for future in futures:
             path, res = future.result()
             if res is not None:
                 results[path] = res
     
+    total_df = pd.DataFrame()
+    for key, value in results.items():
+        sub_total_df = value['total_df']
+        total_df = pd.concat([total_df, sub_total_df])
+        value.pop('total_df')
+
+    
+    total_df.to_csv(args.output_path + 'total_df.csv', index=False)
+    # combine the dataframes
+    grouped = total_df.groupby(['media_file','clip_id'])
+
+    any_df= grouped[label_columns[:-1]].any().astype(int).reset_index()
+    any_df.to_csv(args.output_path + 'any_df.csv', index=False)
+
+    # label_counts = grouped[label_columns].sum()
+    # any_2_df = label_counts[label_counts>2].reset_index()
+
+    any_2_df = aggregate_labels(total_df, 'media_file', 'clip_id', 'annotator', label_columns[:-1])
+    any_2_df.to_csv(args.output_path + 'any_2_df.csv', index=False)
+
     # dump the results to a json file with indentation
     import json
-    with open(args.output_path + 'results.json', 'w') as f:
+    with open(args.output_path + 'meta_data.json', 'w') as f:
         json.dump(results, f, indent=4)
 
-    # plot the distribution of number of labels
-    import matplotlib.pyplot as plt
-    plt.hist([x['num_labels'] for x in results.values()], bins=20)
-    plt.ylabel('Number of clips')
-    plt.xlabel('Number of labels')
-    plt.savefig(args.output_path + 'num_labels_dis.png')
+    # # plot the distribution of number of labels
+    # import matplotlib.pyplot as plt
+    # plt.hist([x['num_labels'] for x in results.values()], bins=20)
+    # plt.ylabel('Number of clips')
+    # plt.xlabel('Number of labels')
+    # plt.savefig(args.output_path + 'num_labels_dis.png')
 
+
+def aggregate_labels(df, item_col1, item_col2, annotator_col, label_cols):
+
+    # Group by the two item columns and annotator to get unique annotations
+    unique_annotations = df.groupby([item_col1, item_col2, annotator_col])[label_cols].max().reset_index()
+
+    # Group by the item columns and count the number of unique annotators
+    annotator_counts = unique_annotations.groupby([item_col1, item_col2])[annotator_col].count().reset_index(name='annotator_count')
+
+    # Filter items where the count of unique annotators is 2 or more
+    filtered_items = annotator_counts[annotator_counts['annotator_count'] >= 2]
+
+    # Merge the filtered items with the unique annotations to get the labels
+    merged_df = pd.merge(filtered_items, unique_annotations, on=[item_col1, item_col2])
+
+    # Aggregate the labels using 'any' to get the final labels
+    final_labels = merged_df.groupby([item_col1, item_col2])[label_cols].any().astype(int).reset_index()
+
+    return final_labels
 
 def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_df, pipeline):
 
@@ -194,8 +274,6 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
 
     if len(label_df) == 0:
         return
-    
-    
     
     # Create output directory if it doesn't exist
     os.makedirs(clip_dir, exist_ok=True)
@@ -229,6 +307,12 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
             print(f'Skipping {i} as it is less than 1 second {new_stop - new_start}')
             continue
 
+        # check length of the clip
+        if new_stop - new_start > 30000: # more than 30 seconds
+            print(f'cutting {i} as it is more than 30 seconds {new_stop - new_start}')
+            # cut the clip to 30 seconds
+            new_stop = new_start + 30000
+
         # check if the clip is already created
         if not os.path.exists(clip_path):
             clip = audio[int(new_start*sr/1000):int(new_stop*sr/1000)]
@@ -237,6 +321,7 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
         # get stuttering labels
         label_df['intersects'] = label_df.apply(lambda row: check_intersects(row, new_start, new_stop), axis=1)
         temp_df = label_df[label_df['intersects']]
+        temp_df['clip_id'] = i
         # temp_df = temp_df.dropna()
         num_labels_per_clip.append(len(temp_df))
 
@@ -257,7 +342,7 @@ def get_frames_from_transcript(audio_path, clip_dir, label_path, label_df, clip_
             for row in temp_df.values:
                 start_l = max(0, (row[2] - new_start)/1000)
                 end_l = min(duration/1000, (row[3] - new_start)/1000)
-                l = ' '.join([str(x) for x in row[6:-1]])
+                l = ' '.join([str(x) for x in row[6:-2]])
                 f.write(f'{start_l} {end_l} {l}\n')
 
         # # write the label to a json file for whispercnn
@@ -333,8 +418,8 @@ def process_wav_files_transcript(wav_path, args, pipeline):
     label_df = label_df[label_df['annotator'] == args.anotator]
     
     # if split is test skip
-    if 'split' in label_df.columns and label_df['split'].values[0] == 'test':
-        return wav_path, None
+    # if 'split' in label_df.columns and label_df['split'].values[0] == 'test':
+    #     return wav_path, None
 
     clip_df = pd.read_csv(args.clip_csv)
     clip_df = clip_df[clip_df['media_file'] == file_id]
@@ -355,7 +440,7 @@ def create_clips_from_transcript(args):
     results = {}
     with ThreadPoolExecutor() as executor:
         futures = []
-        for wav_path in os.listdir(args.ds_path):
+        for wav_path in tqdm(os.listdir(args.ds_path)):
             futures.append(executor.submit(process_wav_files_transcript, wav_path, args, pipeline))
         
         # Optionally, wait for all futures to complete
@@ -368,19 +453,25 @@ def create_clips_from_transcript(args):
     for key, value in results.items():
         sub_total_df = value['total_df']
         total_df = pd.concat([total_df, sub_total_df])
+        value.pop('total_df')
     total_df.to_csv(args.output_path + 'total_df.csv', index=False)
-    print(len(results))
-    # dump the results to a json file with indentation
-    import json
+
+    # plot the distribution of number of labels
+    import matplotlib.pyplot as plt
+    plt.hist([x['num_labels'] for x in results.values()], bins=20)
+    plt.ylabel('Number of clips')
+    plt.xlabel('Number of labels')
+    plt.savefig(args.output_path + 'num_labels_dis.png')
+    
     with open(args.output_path + 'results.json', 'w') as f:
         json.dump(results, f, indent=4)
 
 if __name__ == "__main__":
 
-    output_path = 'datasets/fluencybank/ds_sentence/reading/'
-    ds_path = 'datasets/fluencybank/wavs_original/reading/'
-    label_csv = 'datasets/fluencybank/new_annotations/reading/csv/labels.csv'
-    clip_csv = 'datasets/fluencybank/new_annotations/reading/csv/transcripts.csv'
+    output_path = 'datasets/fluencybank/ds_5/reading/'
+    ds_path = 'datasets/fluencybank/wavs/reading/'
+    label_csv = 'datasets/fluencybank/our_annotations/reading/csv/total_label.csv'
+    clip_csv = 'datasets/fluencybank/our_annotations/reading/csv/transcripts.csv'
     anotator = 'A3'
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_path', type=str, default=output_path)
@@ -388,9 +479,18 @@ if __name__ == "__main__":
     parser.add_argument('--label_csv', type=str, default=label_csv)
     parser.add_argument('--clip_csv', type=str, default=clip_csv)
     parser.add_argument('--anotator', type=str, default=anotator)
+    parser.add_argument('--stride_duration', type=int, default=2)
+    parser.add_argument('--clip_length', type=int, default=5)
+    parser.add_argument('--method', type=str, default='constant_stride')
     args = parser.parse_args()
 
-    create_clips_from_transcript(args)
+    if args.method == 'constant_stride':
+        create_clips_strided(args)
+    elif args.method == 'transcript':
+        create_clips_from_transcript(args)
+    else:
+        print('Method not implemented')
+        exit(1)
 
     
     

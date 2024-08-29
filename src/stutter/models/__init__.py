@@ -1,12 +1,14 @@
 from .lstm import LSTMModel
 from .convlstm import ConvLSTM
 from .lstmext import LSTMExt
+from .whisper_cnn import WhisperDetector
 import torch
 
 available_models = {
     'lstm': LSTMModel,
     'convlstm': ConvLSTM,
     'lstmext': LSTMExt,
+    'whisperyoho': WhisperDetector
 }
 class NoneScheduler:
     def __init__(self, lr):

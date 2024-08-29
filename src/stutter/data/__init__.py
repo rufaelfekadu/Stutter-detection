@@ -1,6 +1,6 @@
 from .sep28 import Sep28K
 from .uclass import Uclass
-from .fluencybank import FluencyBank, FluencyBankSlow
+from .fluencybank import FluencyBank, FluencyBankSlow, FluencyBankYOHO  
 from torchaudio.transforms import MelSpectrogram
 from sklearn.model_selection import train_test_split
 import torch
@@ -10,7 +10,8 @@ import pandas as pd
 available_datasets = {
     'uclass': Uclass,
     'fluencybank': FluencyBank,
-    'sep28k': Sep28K
+    'sep28k': Sep28K,
+    'fluencybankyoho': FluencyBankYOHO
 }
 
 def get_dataset(cfg):
@@ -21,7 +22,8 @@ def get_dataset(cfg):
         idx = np.where(ds.split == splits.index(split))[0]
         print(f'{split} dataset size: {len(idx)}')
         datasets[split] = torch.utils.data.Subset(ds, idx)
-    print_dataset_stats(datasets)
+    if not 'yoho'in cfg.data.name:
+        print_dataset_stats(datasets)
     return datasets
 
 def print_dataset_stats(dataset):
@@ -72,9 +74,9 @@ if __name__ == "__main__":
     from stutter.utils.misc import setup_exp
     from stutter.config import cfg
     
-    cfg.data.name = 'fluencybank'
-    cfg.data.root = 'datasets/fluencybank/new_clips'
-    cfg.data.label_path = 'outputs/fluencybank/fluencybank_labels_new_split.csv'
+    cfg.data.name = 'fluencybankyoho'
+    cfg.data.root = 'datasets/fluencybank/ds_sentence/reading/A3'
+    cfg.data.label_path = 'datasets/fluencybank/new_annotations/reading_split.json'
     cfg.output_dir = 'outputs/fluencybank'
 
     setup_exp(cfg)

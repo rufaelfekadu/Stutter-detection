@@ -1,19 +1,32 @@
-from collections import Counter
+import unittest
+import torch
+from stutter.utils.metrics import iou_metric  # Assuming iou_metric is defined in metrics.py
 
-def select_majority_values(lists):
-    # Transpose the list of lists to group elements by their positions
-    transposed = list(zip(*lists))
-    
-    # Find the majority element for each group
-    majority_values = []
-    for group in transposed:
-        # Get the most common element
-        most_common = Counter(group).most_common(1)[0][0]
-        majority_values.append(most_common)
-    
-    return majority_values
+class TestIoUMetric(unittest.TestCase):
+    def test_iou_metric(self):
+        # Test case 1: Perfect overlap
+        y_true = torch.tensor([[[0, 10, 1, 1], [20, 30, 1, 1]]])
+        y_pred = torch.tensor([[[0, 10, 1, 1], [20, 30, 1, 1]]])
+        expected_iou = 1.0
+        self.assertAlmostEqual(iou_metric(y_true, y_pred).item(), expected_iou, places=4)
 
-# Example usage
-input_data = [[1, 0, 0, 1, 3], [0, 1, 1, 1, 3], [1, 0, 1, 1, 1]]
-result = select_majority_values(input_data)
-print(result)  # Output: [0, 0, 1, 1, 1]
+        # Test case 2: Partial overlap
+        y_true = torch.tensor([[[0, 10, 1, 1], [20, 30, 1, 1]]])
+        y_pred = torch.tensor([[[5, 15, 1, 1], [25, 35, 1, 1]]])
+        expected_iou = 0.3333  # (5/15 + 5/15) / 2
+        self.assertAlmostEqual(iou_metric(y_true, y_pred).item(), expected_iou, places=4)
+
+        # Test case 3: No overlap
+        y_true = torch.tensor([[[0, 10, 1, 1], [20, 30, 1, 1]]])
+        y_pred = torch.tensor([[[10, 20, 1, 1], [30, 40, 1, 1]]])
+        expected_iou = 0.0
+        self.assertAlmostEqual(iou_metric(y_true, y_pred).item(), expected_iou, places=4)
+
+        # Test case 4: Mixed overlap
+        y_true = torch.tensor([[[0, 10, 0, 0], [20, 30, 1, 1]]])
+        y_pred = torch.tensor([[[5, 15, 1, 1], [20, 30, 1, 1]]])
+        expected_iou = 1  # (5/15 + 10/10) / 2
+        self.assertAlmostEqual(iou_metric(y_true, y_pred).item(), expected_iou, places=4)
+
+if __name__ == '__main__':
+    unittest.main()

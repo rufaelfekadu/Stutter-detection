@@ -11,6 +11,66 @@ def compute_video_classification_metrics(p):
     f1_score = f1.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)['f1']
     return {"accuracy": accuracy, "f1": f1_score}
 
+def binary_acc(y_true, y_pred):
+  
+    threshold = 0.5
+
+    binary_true = y_true[:,:,2:-1]
+    binary_pred = y_pred[:,:,2:-1]
+    binary_pred = torch.sigmoid(binary_pred) >= threshold
+    # binary_true = torch.greater_equal(binary_true, threshold)
+    # binary_pred = torch.greater_equal(binary_pred, threshold)
+    # binary_pred = tf.greater(y_pred[:, [0, 2]], threshold)
+
+    # acc = tf.square(y_true - y_pred)
+
+    acc = torch.sum(binary_true == binary_pred).float() / binary_true.numel()
+
+    return acc
+
+def iou_metric(y_true, y_pred):
+    # y_true -> (batch_size, 22, 14)
+    # y_pred -> (batch_size, 22, 14)
+    threshold = 0.5
+    # for all dim=1 if any class prediction is greater than threshold then set it to 1
+    y_pred_b = torch.sigmoid(y_pred[:,:,2:-1]) >= threshold
+    y_true_b = y_true[:,:,2:-1]
+
+    mask = y_true_b.sum(dim=2) > 0
+    # compute iou between start and end times in seconds
+    start_pred, end_pred = y_pred[:,:,0], y_pred[:,:,1]
+    start_true, end_true = y_true[:,:,0], y_true[:,:,1]
+
+    intersection_start = torch.max(start_pred, start_true)
+    intersection_end = torch.min(end_pred, end_true)
+    intersection = torch.clamp(intersection_end - intersection_start, min=0)
+
+    union_start = torch.min(start_pred, start_true)
+    union_end = torch.max(end_pred, end_true)
+    union = torch.clamp(union_end - union_start, min=0)
+
+    iou = intersection / (union + 1e-6)
+
+    iou = iou * mask.float()
+    iou = iou.sum() / mask.sum()
+
+    return iou.mean()
+
+
+
+def binary_f1(y_true, y_pred):
+    threshold = 0.5
+    binary_true = y_true[:,:,2:-1]
+    binary_pred = y_pred[:,:,2:-1]
+    binary_pred = torch.sigmoid(binary_pred) >= threshold
+    num_classes = binary_true.shape[-1]
+    f1 = []
+    for i in range(num_classes):
+        pred = binary_pred[:,:, i]
+        label = binary_true[:,:, i]
+        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy(), average='macro'))
+    return f1
+
 def EER(predictions, labels):
 
     # if  isinstance(predictions, torch.Tensor):
