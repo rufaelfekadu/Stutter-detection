@@ -35,8 +35,8 @@ class FluencyBankYOHO(Dataset):
 
     def __init__(self, **kwargs):
         [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
-        self.audio_splits = glob(f'{self.root}/clips/*/*.wav')
-        self.text_splits = glob(f'{self.root}/label/*/yohos/*.txt')
+        self.audio_splits = glob(f'{self.root}/clips/audio/*/*.wav')
+        self.text_splits = glob(f'{self.root}/label/*/yoho/*.txt')
         assert len(self.audio_splits) == len(self.text_splits), f"Number of audio {len(self.audio_splits)} and text {len(self.text_splits)} splits do not match"
         self.transform = AutoFeatureExtractor.from_pretrained("openai/whisper-base", cache_dir="./outputs/")
         
@@ -60,7 +60,7 @@ class FluencyBankYOHO(Dataset):
         audio_path = self.audio_splits[idx]
         audio_file = audio_path.split('/')[-2]
         sample_id = audio_path.split('/')[-1].split('.')[0]
-        txt_path = f"{self.root}/label/{audio_file}/yohos/{sample_id}.txt"
+        txt_path = f"{self.root}/label/{audio_file}/yoho/{sample_id}.txt"
         wav,sr = sf.read(audio_path)
         audio_features = self.transform(wav,sampling_rate=sr)
         labels = np.loadtxt(txt_path, delimiter=" ")

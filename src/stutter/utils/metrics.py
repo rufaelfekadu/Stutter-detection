@@ -19,6 +19,36 @@ def binary_acc(y_true, y_pred):
 
     return acc
 
+def iou_metric(y_true, y_pred):
+    # y_true -> (batch_size, 22, 14)
+    # y_pred -> (batch_size, 22, 14)
+    threshold = 0.5
+    # for all dim=1 if any class prediction is greater than threshold then set it to 1
+    y_pred_b = torch.sigmoid(y_pred[:,:,2:-1]) >= threshold
+    y_true_b = y_true[:,:,2:-1]
+
+    mask = y_true_b.sum(dim=2) > 0
+    # compute iou between start and end times in seconds
+    start_pred, end_pred = y_pred[:,:,0], y_pred[:,:,1]
+    start_true, end_true = y_true[:,:,0], y_true[:,:,1]
+
+    intersection_start = torch.max(start_pred, start_true)
+    intersection_end = torch.min(end_pred, end_true)
+    intersection = torch.clamp(intersection_end - intersection_start, min=0)
+
+    union_start = torch.min(start_pred, start_true)
+    union_end = torch.max(end_pred, end_true)
+    union = torch.clamp(union_end - union_start, min=0)
+
+    iou = intersection / (union + 1e-6)
+
+    iou = iou * mask.float()
+    iou = iou.sum() / mask.sum()
+
+    return iou.mean()
+
+
+
 def binary_f1(y_true, y_pred):
     threshold = 0.5
     binary_true = y_true[:,:,2:-1]

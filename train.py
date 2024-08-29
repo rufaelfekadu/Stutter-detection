@@ -22,7 +22,7 @@ def main(cfg):
 
     logger = WandbLogger(cfg)
 
-    trainer = build_trainer(cfg, logger, metrics=['binary_acc'])
+    trainer = build_trainer(cfg, logger, metrics=['binary_acc', 'iou'])
     
     trainer.train()
     trainer.load_model()

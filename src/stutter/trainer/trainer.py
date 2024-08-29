@@ -8,7 +8,7 @@ from stutter.utils.annotation import LabelMap
 from stutter.data import get_dataloaders
 from stutter.models import build_model
 from stutter.utils.meters import LossMeter, AverageMeter
-from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER, binary_acc, binary_f1
+from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER, binary_acc, binary_f1, iou_metric
 from stutter.utils.loss import build_loss, CCCLoss
 import librosa
 import matplotlib.pyplot as plt
@@ -24,6 +24,7 @@ metric_bank={
     'eer': multilabel_EER,
     'binary_acc': binary_acc,
     'binary_f1': binary_f1,
+    'iou': iou_metric,
 }
 
 class BaseTrainer(object):
@@ -352,17 +353,32 @@ class YohoTrainer(Trainer):
             't2': loss.item()
         }
 
-    def test_step(self, batch):
+    # def test_step(self, batch):
 
-        x, y = self.parse_batch_train(batch)
-        preds = self.model(x.squeeze(1))
-        self.test_preds.append(preds)
-        self.test_labels.append(y)
-        metrics = self.compute_metrics(preds, y)
+    #     x, y = self.parse_batch_train(batch)
+    #     preds = self.model(x.squeeze(1))
+    #     self.test_preds.append(preds)
+    #     self.test_labels.append(y)
+    #     metrics = self.compute_metrics(preds, y)
 
-        return {
-            't2': metrics
-        }
+    #     return {
+    #         't2': metrics
+    #     }
+
+    def test(self, loader=None, name='test'):
+        # generate the reference txt_files
+        loader = loader or self.test_loader
+        self.stage = 'test'
+        self.model.eval()
+        self._reset_meters(self.test_meters)
+
+        for batch in loader:
+            x, y = self.parse_batch_train(batch)
+            preds = self.model(x.squeeze(1))
+            self.test_preds.append(preds)
+            self.test_labels.append(y)
+        
+        self.test_preds
         
 
     def val_step(self, batch):
