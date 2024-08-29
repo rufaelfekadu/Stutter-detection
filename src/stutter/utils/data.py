@@ -1,9 +1,13 @@
-import numpy as np
-import librosa
-from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
-from tqdm import tqdm
+import av
 import os
 import torch
+import librosa
+import numpy as np
+import pandas as pd
+import os.path as op
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
+
 
 def _load_audio_file(row, **kwargs):
 
@@ -108,6 +112,105 @@ def logmelfilterbank(
     mel_basis = librosa.filters.mel(sr=sampling_rate, n_fft=fft_size, n_mels=num_mels, fmin=fmin, fmax=fmax)
  
     return np.log10(np.maximum(eps, np.dot(spc, mel_basis.T)))
+
+# Video processing functions
+
+STUTTER_CLASSES = ['SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME']
+PRIMARY_EVENT = ['SR', 'ISR', 'MUR', 'P', 'B']
+SECONDARY_EVENT = ['NV','V', 'FG', 'HM', 'ME']
+
+def custom_aggregation(group):
+    # Calculate the number of rows for the annotator in the group
+    row_count = len(group)
+    aggregations ={
+        'T': 'max',
+        'stutter_event': 'max',
+        'primary_event': 'max',
+        'secondary_event': 'max',
+        'stutter_type': 'max',
+    }
+    group = group.agg(aggregations)
+    group['events_count'] = row_count    
+    return group
+
+def make_video_dataframe(manifest_file, annotator, root:str = None, extension = ".mp4", aggregate:bool = False, agg_function = custom_aggregation, split:str = "train"):
+    '''
+    manifest_file: path to the manifest file
+    annotator: path to the annotator file
+    aggregate: If True, aggregate the labels
+    root: Dataset root path
+    agg_function: Function to aggregate the labels
+    '''
+    df = pd.read_csv(manifest_file)
+    df = df[df['split'] == split]
+    print(f"Total {split} samples: {len(df)}")
+    if annotator is not None:
+        df = df[df['annotator'].isin([annotator, np.nan]) ]
+        print(f"Annotator {annotator} has {len(df)} samples")
+    df['annotator'] = df['annotator'].fillna("None")
+    df['file_name'] = df['media_file'] + "/" + df['media_file'] + "_" +df ['clip_id'].astype(str) + extension
+    df['stutter_event'] = df[STUTTER_CLASSES].apply(lambda x: (x > 0).any(), axis=1)
+    df['primary_event'] = df[PRIMARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
+    df['secondary_event'] = df[SECONDARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
+    df['stutter_type'] = df[['primary_event', 'secondary_event']].apply(lambda x: "Both" if x['primary_event'] and x['secondary_event'] else "Primary" if x['primary_event'] else "Secondary" if x['secondary_event'] else "None", axis=1)
+    df['secondary_category'] = df[SECONDARY_EVENT].apply(lambda x: '_'.join(df[SECONDARY_EVENT].columns[x == 1]), axis=1)
+    if aggregate and agg_function is not None:
+        df = df.groupby('file_name').apply(agg_function).reset_index()
+    if root is not None:
+        df['file_name'] = df['file_name'].apply(lambda x: op.join(root, x))
+    print(f"Total samples after aggregation: {len(df)}")
+    print(f"primary_event:  \n {df.primary_event.value_counts()}  \n______\n secondary_event: \n  {df.secondary_event.value_counts()} \n______\n stutter_type:  \n {df.stutter_type.value_counts()}\n")
+    return df
+
+def sample_frame_indices(clip_len, frame_sample_rate, seg_len):
+    '''
+    Sample a given number of frame indices from the video.
+    Args:
+        clip_len (`int`): Total number of frames to sample.
+        frame_sample_rate (`int`): Sample every n-th frame.
+        seg_len (`int`): Maximum allowed index of sample's last frame.
+    Returns:
+        indices (`List[int]`): List of sampled frame indices
+    '''
+    converted_len = int(clip_len * frame_sample_rate)
+    end_idx = np.random.randint(converted_len, seg_len)
+    start_idx = end_idx - converted_len
+    indices = np.linspace(start_idx, end_idx, num=clip_len)
+    indices = np.clip(indices, start_idx, end_idx - 1).astype(np.int64)
+    return indices
+
+def read_video_pyav(container, indices):
+    '''
+    Decode the video with PyAV decoder.
+    Args:
+        container (`av.container.input.InputContainer`): PyAV container.
+        indices (`List[int]`): List of frame indices to decode.
+    Returns:
+        result (np.ndarray): np array of decoded frames of shape (num_frames, height, width, 3).
+    '''
+    frames = []
+    container.seek(0)
+    start_index = indices[0]
+    end_index = indices[-1]
+    for i, frame in enumerate(container.decode(video=0)):
+        if i > end_index:
+            break
+        if i >= start_index and i in indices:
+            reformatted_frame = frame.reformat(width=224,height=224)
+            frames.append(reformatted_frame)
+    new=np.stack([x.to_ndarray(format="rgb24") for x in frames])
+
+    return new
+
+
+def prepare_hf_dataset_video(example,processor, label_type:str = "secondary_event", clip_len=10):
+    container = av.open(example['file_name'])
+    indices = sample_frame_indices(clip_len=clip_len, frame_sample_rate=2, seg_len=container.streams.video[0].frames)
+    video = read_video_pyav(container=container, indices=indices)
+    inputs = processor(list(torch.tensor(video)), return_tensors='pt', do_resize=True)
+    inputs['pixel_values'] = torch.tensor(inputs['pixel_values']).squeeze()
+    inputs['labels'] = example[label_type]
+    return inputs
 
 if __name__ == "__main__":
 

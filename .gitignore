@@ -12,7 +12,10 @@ datasets
 
 # Logs
 *logs/
+*wandb/
 outputs/
+# huggingface models
+*results/
 
 # Virtual environment
 venv/

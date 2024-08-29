@@ -1,6 +1,15 @@
 import torch
 import numpy as np
+from datasets import load_metric
 from sklearn.metrics import f1_score, roc_curve, multilabel_confusion_matrix
+
+
+acc = load_metric("accuracy")
+f1 = load_metric("f1")
+def compute_video_classification_metrics(p):
+    accuracy  = acc.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)['accuracy']
+    f1_score = f1.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)['f1']
+    return {"accuracy": accuracy, "f1": f1_score}
 
 def EER(predictions, labels):
 
