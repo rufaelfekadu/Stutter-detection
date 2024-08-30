@@ -7,6 +7,7 @@ _C.name = 'stutter-detection'
 _C.seed = 42
 _C.tasks = ['t1']
 _C.setting = 'yoho'
+_C.cache_dir = '/tmp/'
 
 
 
@@ -30,6 +31,10 @@ _C.data.hop_length = 160
 _C.data.n_fft = 512
 _C.data.sr = 16000
 _C.data.n_frames = 3
+_C.data.annotation = 'secondary_event'
+_C.data.aggregate = True
+_C.data.annotator = "A3"
+_C.data.split_strategy = "ds_5"
 
 
 # data loader configs
@@ -44,6 +49,14 @@ _C.model.num_layers = 1
 _C.model.output_size = 6
 _C.model.dropout = 0.5
 _C.model.seq_len = 301
+
+# video model configs
+_C.model.vivit = CN()
+_C.model.vivit.num_frames = 10
+_C.model.vivit.video_size = [10, 224, 224]
+
+
+
 
 # convlstm
 _C.model.emb_dim = 64

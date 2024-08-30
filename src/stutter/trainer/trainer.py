@@ -6,13 +6,14 @@ from tqdm import tqdm
 
 from stutter.utils.annotation import LabelMap
 from stutter.data import get_dataloaders
+from stutter.data.hf_data import VivitVideoData
 from stutter.models import build_model
 from stutter.utils.meters import LossMeter, AverageMeter
-from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER, binary_acc, binary_f1, iou_metric
+from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER, binary_acc, binary_f1, iou_metric,compute_video_classification_metrics
 from stutter.utils.loss import build_loss, CCCLoss
 import librosa
 import matplotlib.pyplot as plt
-from transformers import AutoModelForAudioClassification, TrainingArguments
+from transformers import AutoModelForAudioClassification, TrainingArguments, VivitForVideoClassification, VivitConfig, AdamW
 from transformers import Trainer as HuggingFaceTrainer
 
 
@@ -25,6 +26,7 @@ metric_bank={
     'binary_acc': binary_acc,
     'binary_f1': binary_f1,
     'iou': iou_metric,
+    'video_metrics': compute_video_classification_metrics,
 }
 
 class BaseTrainer(object):
@@ -426,10 +428,74 @@ class Wave2vecTrainer(Trainer):
     def test(self):
         self.hug_trainer.evaluate()
         
-
+class VivitTrainer():
+    def __init__(self, cfg, logger=None, metrics=None):
+        dataset = VivitVideoData(cfg.data.label_path, cfg.data.annotator, cfg.data.root
+                                 ,aggregate=cfg.data.aggregate, label_category=cfg.data.annotation,
+                                 num_proc=cfg.solver.num_workers)
+        self.dataset = dataset.prepare_dataset()
+        labels = self.dataset['train'].features['labels'].names
+        config = VivitConfig.from_pretrained("google/vivit-b-16x2-kinetics400")
+        config.num_classes=len(labels)
+        config.id2label = {str(i): c for i, c in enumerate(labels)}
+        config.label2id = {c: str(i) for i, c in enumerate(labels)}
+        config.num_frames=cfg.model.vivit.num_frames
+        config.video_size=cfg.model.vivit.video_size
+        self.model = VivitForVideoClassification.from_pretrained(
+                    "google/vivit-b-16x2-kinetics400",
+                    ignore_mismatched_sizes=True,
+                    config=config,cache_dir=cfg.cache_dir).to(cfg.solver.device)
+        self.training_args = TrainingArguments(
+            output_dir=f"{cfg.output.save_dir}/{cfg.data.split_strategy}_{cfg.data.annotator}_{cfg.data.annotation}",         
+            num_train_epochs=cfg.solver.epochs,             
+            per_device_train_batch_size=cfg.solver.batch_size, 
+            gradient_accumulation_steps=2,  
+            per_device_eval_batch_size=10,    
+            learning_rate=5e-05,            
+            weight_decay=0.01,              
+            logging_dir=cfg.output.log_dir,           
+            logging_steps=cfg.solver.log_steps,                
+            seed=42,                       
+            evaluation_strategy="steps",    
+            eval_steps=10,                   
+            warmup_steps=int(0.1 * 20),      
+            optim="adamw_torch",          
+            lr_scheduler_type="linear",      
+            fp16=True,    
+            metric_for_best_model="accuracy",
+            load_best_model_at_end=True,
+            report_to='wandb',
+            run_name=f"{cfg.data.split_strategy}_{cfg.data.annotator}"
+            # auto_find_batch_size = True                   
+        )
+        self.optimizer = AdamW(self.model.parameters(), lr=5e-05, betas=(0.9, 0.999), eps=1e-08)
+        self.trainer = HuggingFaceTrainer(
+            model=self.model,                      
+            args=self.training_args, 
+            train_dataset=self.dataset["train"],      
+            eval_dataset=self.dataset["test"],       
+            optimizers=(self.optimizer, None),
+            compute_metrics=metric_bank['video_metrics']
+        )
+        self.cfg = cfg
+        
+    def train(self):
+        self.trainer.train()
+        self.trainer.save_model()
+        self.trainer.save_state()
+    
+    def test(self):
+        testset = VivitVideoData(self.cfg.data.label_path, "Gold", self.cfg.data.root
+                                 ,aggregate=self.cfg.data.aggregate, label_category=self.cfg.data.annotation,
+                                 num_proc=self.cfg.solver.num_workers)
+        testset = testset.prepare_dataset()
+        self.trainer.evaluate(testset)
+        
+        
 trainer_registery = {
     'mtl': MTLTrainer,
     'yoho': YohoTrainer,
+    'vivit': VivitTrainer,
 }
 
 def build_trainer(cfg, logger=None, metrics=['f1']):

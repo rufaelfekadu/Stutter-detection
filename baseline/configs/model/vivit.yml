@@ -1,0 +1,24 @@
+setting: 'vivit'
+
+model:
+  name: 'vivit'
+  vivit:
+    num_frames: 10
+    video_size: [10, 224, 224]
+
+solver:
+  num_workers: 4
+  batch_size: 20
+  epochs: 2
+  device: 'cuda'
+  log_steps: 10
+
+data:
+  name: 'fluencybank'
+  annotation: "secondary_event"
+  aggregate: True
+  annotator: "A1"
+  split_strategy: "ds_5"
+  label_path: "datasets/fluencybank/ds_5/reading/total_df.csv"
+  root: "datasets/fluencybank/ds_5/reading/clips/video/"
+

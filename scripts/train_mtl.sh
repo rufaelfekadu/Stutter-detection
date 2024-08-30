@@ -9,6 +9,6 @@ do
         --data_config "../baseline/configs/data/$data.yml" \
         --model_config "../baseline/configs/model/$model.yml" \
         --tasks "t1" "t2" \
-        --losses "ce" "ccc" \
+        --losses "ce" "ccc" 
     done
 done

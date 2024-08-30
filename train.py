@@ -14,18 +14,20 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Train a model')
     parser.add_argument('--data_config', type=str, default='baseline/configs/data/fluencybankyoho.yml')
     parser.add_argument('--model_config', type=str, default='baseline/configs/model/whisperyoho.yml')
+    parser.add_argument('--logger', action='store_true')
     parser.add_argument('--opts', nargs='*', default=[])
     args = parser.parse_args()
     return args
 
 def main(cfg):
 
-    logger = WandbLogger(cfg)
+    logger = WandbLogger(cfg) if args.logger else None
+    metrics = ['video_metrics']
 
-    trainer = build_trainer(cfg, logger, metrics=['binary_acc', 'iou'])
+    trainer = build_trainer(cfg, logger, metrics)
     
     trainer.train()
-    trainer.load_model()
+    # trainer.load_model()
     trainer.test()
 
 

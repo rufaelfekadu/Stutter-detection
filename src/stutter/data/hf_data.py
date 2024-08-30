@@ -16,13 +16,15 @@ class VivitVideoData():
         self.processor = VivitImageProcessor.from_pretrained("google/vivit-b-16x2-kinetics400", cache_dir="/tmp/")
         self.dataset = Dataset.from_pandas(make_video_dataframe(self.manifest_file,self.annotator,root=self.data_root,aggregate=self.aggregate, split=self.split))
     
+    # def __len__(self):
+    #     return len(self.dataset)
     def prepare_dataset(self):    
         dataset = self.dataset.map(prepare_hf_dataset_video, fn_kwargs={'label_type':self.label_category, 'processor':self.processor, 'clip_len':self.clip_len} , 
                                    batched=False, num_proc=self.num_proc, remove_columns=self.dataset.column_names)
         dataset = dataset.class_encode_column("labels")
         shuffled_dataset = dataset.shuffle(seed=42)
         if self.split == "train":
-            shuffled_dataset = shuffled_dataset.train_test_split(test_size=0.1)
+            shuffled_dataset = shuffled_dataset.train_test_split(test_size=0.2)
         return shuffled_dataset
         
     
