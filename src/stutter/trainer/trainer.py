@@ -432,9 +432,13 @@ class VivitTrainer():
     def __init__(self, cfg, logger=None, metrics=None):
         dataset = VivitVideoData(cfg.data.label_path, cfg.data.annotator, cfg.data.root
                                  ,aggregate=cfg.data.aggregate, label_category=cfg.data.annotation,
-                                 num_proc=cfg.solver.num_workers)
+                                 clip_len=cfg.model.vivit.num_frames,num_proc=cfg.solver.num_workers)
         self.dataset = dataset.prepare_dataset()
-        labels = self.dataset['train'].features['labels'].names
+        testset = VivitVideoData(cfg.data.label_path, "Gold", cfg.data.root
+                                 ,aggregate=cfg.data.aggregate, label_category=cfg.data.annotation,
+                                 clip_len=cfg.model.vivit.num_frames,num_proc=cfg.solver.num_workers, split='test')
+        self.testset = testset.prepare_dataset()
+        labels = self.dataset.features['labels'].names
         config = VivitConfig.from_pretrained("google/vivit-b-16x2-kinetics400")
         config.num_classes=len(labels)
         config.id2label = {str(i): c for i, c in enumerate(labels)}
@@ -456,13 +460,12 @@ class VivitTrainer():
             logging_dir=cfg.output.log_dir,           
             logging_steps=cfg.solver.log_steps,                
             seed=42,                       
-            evaluation_strategy="steps",    
-            eval_steps=10,                   
+            evaluation_strategy="epoch",    
             warmup_steps=int(0.1 * 20),      
             optim="adamw_torch",          
             lr_scheduler_type="linear",      
             fp16=True,    
-            metric_for_best_model="accuracy",
+            metric_for_best_model="f1",
             load_best_model_at_end=True,
             report_to='wandb',
             run_name=f"{cfg.data.split_strategy}_{cfg.data.annotator}"
@@ -472,8 +475,8 @@ class VivitTrainer():
         self.trainer = HuggingFaceTrainer(
             model=self.model,                      
             args=self.training_args, 
-            train_dataset=self.dataset["train"],      
-            eval_dataset=self.dataset["test"],       
+            train_dataset=self.dataset,      
+            eval_dataset=self.testset,       
             optimizers=(self.optimizer, None),
             compute_metrics=metric_bank['video_metrics']
         )
@@ -481,15 +484,17 @@ class VivitTrainer():
         
     def train(self):
         self.trainer.train()
-        self.trainer.save_model()
+        self.trainer.save_model(f"{self.cfg.output.save_dir}/{self.cfg.data.split_strategy}_{self.cfg.data.annotator}_{self.cfg.data.annotation}/best/")
         self.trainer.save_state()
+        self.trainer.evaluate(self.testset)
     
     def test(self):
-        testset = VivitVideoData(self.cfg.data.label_path, "Gold", self.cfg.data.root
-                                 ,aggregate=self.cfg.data.aggregate, label_category=self.cfg.data.annotation,
-                                 num_proc=self.cfg.solver.num_workers)
-        testset = testset.prepare_dataset()
-        self.trainer.evaluate(testset)
+        # testset = VivitVideoData(self.cfg.data.label_path, "Gold", self.cfg.data.root
+        #                          ,aggregate=self.cfg.data.aggregate, label_category=self.cfg.data.annotation,
+        #                          num_proc=self.cfg.solver.num_workers)
+        # testset = testset.prepare_dataset()
+        self.trainer.evaluate(self.testset)
+        
         
         
 trainer_registery = {
