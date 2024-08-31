@@ -23,8 +23,8 @@ class VivitVideoData():
                                    batched=False, num_proc=self.num_proc, remove_columns=self.dataset.column_names)
         dataset = dataset.class_encode_column("labels")
         shuffled_dataset = dataset.shuffle(seed=42)
-        if self.split == "train":
-            shuffled_dataset = shuffled_dataset.train_test_split(test_size=0.2)
+        # if self.split == "train":
+        #     shuffled_dataset = shuffled_dataset.train_test_split(test_size=0.1)
         return shuffled_dataset
         
     

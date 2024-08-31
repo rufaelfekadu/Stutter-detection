@@ -7,7 +7,7 @@ import pandas as pd
 import os.path as op
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
-
+rng = np.random.default_rng(42)
 
 def _load_audio_file(row, **kwargs):
 
@@ -154,7 +154,10 @@ def make_video_dataframe(manifest_file, annotator, root:str = None, extension = 
     df['secondary_event'] = df[SECONDARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
     df['stutter_type'] = df[['primary_event', 'secondary_event']].apply(lambda x: "Both" if x['primary_event'] and x['secondary_event'] else "Primary" if x['primary_event'] else "Secondary" if x['secondary_event'] else "None", axis=1)
     df['secondary_category'] = df[SECONDARY_EVENT].apply(lambda x: '_'.join(df[SECONDARY_EVENT].columns[x == 1]), axis=1)
-    if aggregate and agg_function is not None:
+    if aggregate and agg_function is not None and annotator is not None:
+        df = df.groupby('file_name').apply(agg_function).reset_index()
+    else:
+        df = df.groupby(['file_name', 'annotator']).apply(agg_function).reset_index()
         df = df.groupby('file_name').apply(agg_function).reset_index()
     if root is not None:
         df['file_name'] = df['file_name'].apply(lambda x: op.join(root, x))
@@ -173,7 +176,7 @@ def sample_frame_indices(clip_len, frame_sample_rate, seg_len):
         indices (`List[int]`): List of sampled frame indices
     '''
     converted_len = int(clip_len * frame_sample_rate)
-    end_idx = np.random.randint(converted_len, seg_len)
+    end_idx = rng.integers(converted_len, seg_len)
     start_idx = end_idx - converted_len
     indices = np.linspace(start_idx, end_idx, num=clip_len)
     indices = np.clip(indices, start_idx, end_idx - 1).astype(np.int64)

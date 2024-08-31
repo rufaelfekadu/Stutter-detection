@@ -7,9 +7,9 @@ model:
     video_size: [10, 224, 224]
 
 solver:
-  num_workers: 4
+  num_workers: 1
   batch_size: 20
-  epochs: 2
+  epochs: 10
   device: 'cuda'
   log_steps: 10
 
