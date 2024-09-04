@@ -2,13 +2,15 @@ from .lstm import LSTMModel
 from .convlstm import ConvLSTM
 from .lstmext import LSTMExt
 from .whisper_cnn import WhisperDetector
+from .sednet import SedNet
 import torch
 
 available_models = {
     'lstm': LSTMModel,
     'convlstm': ConvLSTM,
     'lstmext': LSTMExt,
-    'whisperyoho': WhisperDetector
+    'whisperyoho': WhisperDetector,
+    'sednet': SedNet
 }
 class NoneScheduler:
     def __init__(self, lr):

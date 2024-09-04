@@ -41,3 +41,7 @@ Thumbs.db
 
 # vscode
 .vscode/
+
+file_list.txt
+sed_eval
+results.yaml

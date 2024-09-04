@@ -5,9 +5,22 @@ import sys
 
 class LabelMap(object):
     def __init__(self):
-        self.labels = ['FP', 'SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
+        self.labels = ['SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
         self.labeltoidx = dict(zip(self.labels, range(len(self.labels))))
-        self.core = ['FP', 'SR', 'ISR', 'MUR', 'P', 'B']
+        self.idxtolabel = dict(zip(range(len(self.labels)), self.labels))
+        self.description = {
+            'SR': 'SoundRepetition',
+            'ISR': 'IncompeleteSyllableRepetition',
+            'MUR': 'MultisyllabicUnitRepetition',
+            'P': 'Prolongation',
+            'B': 'Block',
+            'NV': 'NonVerbal',
+            'V': 'Verbal',
+            'FG': 'FacialGrimaces',
+            'HM': 'HeadMovement',
+            'ME': 'MovementOfExtremities',
+            'T': 'Tension'}
+        self.core = ['SR', 'ISR', 'MUR', 'P', 'B']
         self.secondary = ['NV','V', 'FG', 'HM', 'ME']
         self.tension = ['T']
         self.sep28k_labels = ['Unsure', 'PoorAudioQuality', 'Prolongation', 'Block', 'SoundRep', 'WordRep', 'DifficultToUnderstand',
@@ -30,7 +43,7 @@ class LabelMap(object):
         tension = label_array[self.labeltoidx['T']]  
         return f'{core};{secondary};{tension}'
     
-    def labelfromstr(self, label_str):
+    def labelfromstr(self, label_str, verbose=False):
         # strip spaces tabs and newlines from the label string
         label_original= label_str
         replacements = {
@@ -75,7 +88,8 @@ class LabelMap(object):
         matches = re.findall(pattern, label_str)
         label_array = [0] * len(self.labels)
         if not matches:
-            print(f'No matches found for {label_str}', file=open('label_errors.log', 'a'))
+            if verbose:
+                print(f'No matches found for {label_str}', file=open('label_errors.log', 'a'))
             return label_array
         for match in matches:
             behavior, tension = match
@@ -86,16 +100,49 @@ class LabelMap(object):
                 try:
                     label_array[self.labeltoidx[b]] = 1
                 except KeyError:
-                    print(f'Unknown abbreviation found: {b} from {label_original}', file=open('label_errors.log', 'a'))
+                    if verbose:
+                        print(f'Unknown abbreviation found: {b} from {label_original}', file=open('label_errors.log', 'a'))
             if tension:
                 try:
                     tension = int(tension)
                     label_array[self.labeltoidx['T']] = tension
                 except KeyError:
-                    print(f'Unknown tension value found: {tension} from {label_original}', file=open('label_errors.log', 'a'))
-            print(f'label: {label_original} Behavior: {behavior} tension: {tension} label: {label_array}', file=open('labels_found.log', 'a'))
+                    if verbose:
+                        print(f'Unknown tension value found: {tension} from {label_original}', file=open('label_errors.log', 'a'))
+            if verbose:
+                print(f'label: {label_original} Behavior: {behavior} tension: {tension} label: {label_array}', file=open('labels_found.log', 'a'))
         return label_array
 
+    def check_core(self, label_array):
+        if isinstance(label_array, str):
+            label_array = self.labelfromstr(label_array)
+        return any([label_array[self.labeltoidx[core]] for core in self.core])
+
+    def check_secondary(self, label_array):
+        if isinstance(label_array, str):
+            label_array = self.labelfromstr(label_array)
+        return any([label_array[self.labeltoidx[secondary]] for secondary in self.secondary])
+    
+    def check_tension(self, label_array):
+        if isinstance(label_array, str):
+            label_array = self.labelfromstr(label_array)
+        return label_array[self.labeltoidx['T']]
+    
+    def get_core(self, label_array):
+        if isinstance(label_array, str):
+            label_array = self.labelfromstr(label_array)
+        return [self.idxtolabel[i] for i in range(len(label_array)) if label_array[i] == 1 and self.idxtolabel[i] in self.core], [label_array[self.labeltoidx[core]] for core in self.core]
+    
+    def get_secondary(self, label_array):
+        if isinstance(label_array, str):
+            label_array = self.labelfromstr(label_array)
+        return [self.idxtolabel[i] for i in range(len(label_array)) if label_array[i] == 1 and self.idxtolabel[i] in self.secondary]
+    
+    def get_tension(self, label_array):
+        if isinstance(label_array, str):
+            label_array = self.labelfromstr(label_array)
+        return label_array[self.labeltoidx['T']]
+    
 def clean_element(element):
     # Replace None text with an empty string
     if element.text is None:

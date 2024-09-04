@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model')
-    parser.add_argument('--data_config', type=str, default='baseline/configs/data/fluencybankyoho.yml')
+    parser.add_argument('--data_config', type=str, default='baseline/configs/data/fluencybanksed.yml')
     parser.add_argument('--model_config', type=str, default='baseline/configs/model/whisperyoho.yml')
     parser.add_argument('--logger', action='store_true')
     parser.add_argument('--opts', nargs='*', default=[])
@@ -22,7 +22,7 @@ def parse_args():
 def main(cfg):
 
     logger = WandbLogger(cfg) if args.logger else None
-    metrics = ['video_metrics']
+    metrics = ['f1']
 
     trainer = build_trainer(cfg, logger, metrics)
     

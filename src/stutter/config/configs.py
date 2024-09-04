@@ -24,6 +24,11 @@ _C.data.name = 'sep28k'
 _C.data.root = 'datasets/sep28k/clips'
 _C.data.label_path = 'datasets/sep28k/SEP-28k_labels_new.csv'
 _C.data.ckpt = 'dataset'
+_C.data.cache_dir = './outputs'
+_C.data.split_file = 'split.json'
+
+# huggingface encoder
+_C.data.encoder_name = 'whisper-l'
 
 _C.data.n_mels = 40
 _C.data.win_length = 400
@@ -43,12 +48,15 @@ _C.data.split_strategy = "ds_5"
 # model configs
 _C.model = CN()
 _C.model.name = 'lstm'
+_C.model.cache_dir = './outputs'
 _C.model.input_size = 40
 _C.model.hidden_size = 64
 _C.model.num_layers = 1
 _C.model.output_size = 6
 _C.model.dropout = 0.5
 _C.model.seq_len = 301
+
+_C.model.encoder_name = 'whisper-l'
 
 # video model configs
 _C.model.vivit = CN()

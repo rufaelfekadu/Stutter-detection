@@ -1,6 +1,6 @@
 from .sep28 import Sep28K
 from .uclass import Uclass
-from .fluencybank import FluencyBank, FluencyBankSlow, FluencyBankYOHO  
+from .fluencybank import FluencyBank, FluencyBankSlow, FluencyBankYOHO, FluencyBankSed  
 from torchaudio.transforms import MelSpectrogram
 from sklearn.model_selection import train_test_split
 import torch
@@ -11,7 +11,9 @@ available_datasets = {
     'uclass': Uclass,
     'fluencybank': FluencyBank,
     'sep28k': Sep28K,
-    'fluencybankyoho': FluencyBankYOHO
+    'fluencybankyoho': FluencyBankYOHO,
+    'fluencybanksed': FluencyBankSed,
+    'fluencybankslow': FluencyBankSlow
 }
 
 def get_dataset(cfg):
@@ -22,8 +24,8 @@ def get_dataset(cfg):
         idx = np.where(ds.split == splits.index(split))[0]
         print(f'{split} dataset size: {len(idx)}')
         datasets[split] = torch.utils.data.Subset(ds, idx)
-    if not 'yoho'in cfg.data.name:
-        print_dataset_stats(datasets)
+    # if not 'yoho'in cfg.data.name:
+    #     print_dataset_stats(datasets)
     return datasets
 
 def print_dataset_stats(dataset):
@@ -61,7 +63,7 @@ def get_dataloaders(cfg):
 
     test_loader = torch.utils.data.DataLoader(
         datasets['test'],
-        batch_size=len(datasets['test']),
+        batch_size=cfg.solver.batch_size,
         shuffle=False,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,

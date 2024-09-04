@@ -1,4 +1,5 @@
 tasks: ['t2']
+setting: 'mtl'
 # model
 model:
   name: 'lstm'

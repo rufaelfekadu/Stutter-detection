@@ -6,8 +6,11 @@ import numpy as np
 import pandas as pd
 import os.path as op
 from tqdm import tqdm
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
 rng = np.random.default_rng(42)
+
+from stutter.utils.annotation import LabelMap
 
 def _load_audio_file(row, **kwargs):
 
@@ -113,8 +116,96 @@ def logmelfilterbank(
  
     return np.log10(np.maximum(eps, np.dot(spc, mel_basis.T)))
 
-# Video processing functions
+def aggregate_labels(df, item_col1, item_col2, annotator_col, label_cols, num_annotators=2, gold=False):
+    if gold:
+        # take the Gold annotator if it exists
+        gold_ann = df.groupby([item_col1, item_col2])[annotator_col].transform(lambda x: x == 'Gold')
+        merged_df = pd.merge(df, gold_ann, on=[item_col1, item_col2])
+        filtered_items = merged_df[merged_df[annotator_col] == 'Gold']
 
+        final_labels = filtered_items.groupby([item_col1, item_col2])[label_cols].any().astype(int).reset_index()
+        all_items = final_labels[[item_col1, item_col2]].drop_duplicates()
+        final_labels = pd.merge(all_items, df[gold_ann][[item_col1, item_col2] + label_cols].drop_duplicates(), on=[item_col1, item_col2], how='left').fillna(0)
+        final_labels = final_labels.astype({col: 'int' for col in label_cols})
+        # merge multiple gold labels per item if exists
+        return final_labels
+    
+    # Group by the two item columns and annotator to get unique annotations
+    annotator_counts = df.groupby([item_col1, item_col2])[annotator_col].nunique().reset_index(name='annotator_count')
+    
+    # Merge the annotator counts with the original DataFrame
+    merged_df = pd.merge(df, annotator_counts, on=[item_col1, item_col2])
+    
+    # Filter items based on the number of annotators
+    filtered_items = merged_df[merged_df['annotator_count'] >= num_annotators]
+
+    # Aggregate the labels using 'any' to get the final labels
+    final_labels = filtered_items.groupby([item_col1, item_col2])[label_cols].any().astype(int).reset_index()
+    
+    # Ensure all items are included in the final result
+    all_items = df[[item_col1, item_col2]].drop_duplicates()
+    final_labels = pd.merge(all_items, final_labels, on=[item_col1, item_col2], how='left').fillna(0)
+    final_labels = final_labels.astype({col: 'int' for col in label_cols})
+    
+    return final_labels
+
+def find_ranges(arr, smooth=0):
+    ranges = []
+    start = None
+    zero_count = 0
+    for i, val in enumerate(arr):
+        if val == 1:
+            if start is None:
+                start = i
+            zero_count = 0
+        elif val == 0:
+            if start is not None:
+                zero_count += 1
+                if zero_count > smooth:
+                    ranges.append((start, i - zero_count + 1))
+                    start = None
+                    zero_count = 0
+
+    if start is not None:
+        ranges.append((start, len(arr)))
+
+    return ranges
+
+def construct_labels(label_path, num_frames, num_classes, sr=16000, clip_duration=30):
+    label_map = LabelMap()
+    reverse_map  = {v:k for k,v in label_map.description.items()}
+    with open(label_path, 'r') as f:
+        lines = f.readlines()
+    labels = np.zeros((num_frames, num_classes))
+    for line in lines:
+        start, end, class_name = line.strip().split(',')
+        #  get key from dic for given value
+        class_id = label_map.core.index(reverse_map[class_name])
+        start = int(float(start) * num_frames / clip_duration)
+        end = int(float(end) * num_frames / clip_duration)
+        class_id = int(class_id)
+        labels[start:end, class_id] = 1
+    return labels
+
+def deconstruct_labels(labels, sr=16000, clip_duration=30, smooth=0):
+    label_map = LabelMap()
+    num_frames, num_classes = labels.shape
+    events = []
+    for i in range(num_classes):
+        class_label = labels[:, i]
+        ranges = find_ranges(class_label, smooth=smooth)
+        for start, end in ranges:
+            start_time = start * clip_duration / num_frames
+            end_time = end * clip_duration / num_frames
+            if end_time - start_time < 0.7:
+                continue
+            class_name = label_map.description[label_map.core[i]]
+            events.append((start_time, end_time, class_name))
+
+    return events
+
+
+# Video processing functions
 STUTTER_CLASSES = ['SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME']
 PRIMARY_EVENT = ['SR', 'ISR', 'MUR', 'P', 'B']
 SECONDARY_EVENT = ['NV','V', 'FG', 'HM', 'ME']

@@ -14,6 +14,22 @@ class CrossEntropyLoss(nn.Module):
         loss = F.cross_entropy(y_pred, y_true)
         return loss
 
+class SedLoss(nn.Module):
+    __acceptable_params = ['weights', 'device']
+    def __init__(self, **kwargs):
+        super(SedLoss, self).__init__()
+        [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
+        self.weights = torch.tensor(self.weights)
+
+    def forward(self, y_pred, y_true):
+        # y_pred -> (batch_size, 1500, 5)
+        # y_true -> (batch_size, 1500, 5)
+        # self.weights -> (5,1)
+        weight = self.weights.repeat(y_true.shape[0], y_true.shape[1], 1).to(self.device)
+        # weight = self.weights.to(y_true.device)
+        # apply weights to the loss in the class dimension
+        loss = F.binary_cross_entropy_with_logits(y_pred, y_true, weight=weight)
+        return loss
 
 # class YOHOLoss(nn.Module):
 #     def __init__(self, **kwargs):
@@ -29,6 +45,7 @@ class YOHOLoss(nn.Module):
     def forward(self, y_pred, y_true):
         ind = torch.max(y_true[:,:,2:],axis=2)[0] 
         y_pred[:,:,0:2]  = y_pred[:,:,0:2] * torch.repeat_interleave(ind[:,:,None], repeats=2, dim=2)
+        y_pred[:,:,2:]  = torch.sigmoid(y_pred[:,:,2:])
         loss = F.mse_loss(y_pred, y_true)
         return loss
     
@@ -165,7 +182,8 @@ loss_registery = {
     'ce': CrossEntropyLoss,
     'focal': FocalLossMultiClass,
     'bce': BCELossWithLogits,
-    'yoho': YOHOLoss
+    'yoho': YOHOLoss,
+    'sed': SedLoss
 }
 
 def build_loss(cfg):

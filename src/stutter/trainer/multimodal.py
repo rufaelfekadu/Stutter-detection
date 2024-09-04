@@ -45,11 +45,11 @@ class MultiModalTrainer(Trainer):
     
     def get_dataloaders(self):
         # TODO: Fix this function
-        df = load_from_disk("/fsx/homes/Hawau.Toyin@mbzuai.ac.ae/Stutter-detection/outputs/fluencybank/dataset/stutter_hf/ds_5_multimodal_train")
+        df = load_from_disk("outputs/fluencybank/dataset/stutter_hf/ds_5_multimodal_train")
         df = df.train_test_split(test_size=0.1, seed=42, shuffle=True)
         dataset = df['train']
         val_dataset = df['test']
-        test_dataset =load_from_disk("/fsx/homes/Hawau.Toyin@mbzuai.ac.ae/Stutter-detection/outputs/fluencybank/dataset/stutter_hf/ds_5_multimodal_test")
+        test_dataset =load_from_disk("outputs/fluencybank/dataset/stutter_hf/ds_5_multimodal_test")
         dataset = dataset.map(lambda x: {"input_values": torch.tensor(x["input_values"][0]), 'attention_mask':torch.tensor(x['attention_mask'][0]), "labels": torch.tensor(x["labels"])})
         val_dataset = val_dataset.map(lambda x: {"input_values": torch.tensor(x["input_values"][0]), 'attention_mask':torch.tensor(x['attention_mask'][0]), "labels": torch.tensor(x["labels"])})
         test_dataset = test_dataset.map(lambda x: {"input_values": torch.tensor(x["input_values"][0]), 'attention_mask':torch.tensor(x['attention_mask'][0]), "labels": torch.tensor(x["labels"])})
@@ -72,14 +72,15 @@ class MultiModalTrainer(Trainer):
                 'f1_weighted': f1_weighted, 'f1_macro': f1_macro, 'f1_any':f1_any, **metrics}
 
     def parse_batch_train(self, batch):
-        x = batch['input_values'].to(self.device)
+        image = batch['pixel_values'].to(self.device)
+        audio = batch['input_values'].to(self.device)
         attention_mask = batch['attention_mask'].to(self.device)
         y = batch['labels'].to(self.device)
-        return x, y, attention_mask
+        return image, audio, attention_mask, y
     
     def train_step(self, batch):
-        x, y, attention_mask = self.parse_batch_train(batch)
-        loss, logits = self.model(pixel_values=x, input_values=x, attention_mask=attention_mask, labels=y)
+        image, audio, attention_mask, y = self.parse_batch_train(batch)
+        loss, logits = self.model(pixel_values=image, input_values=audio, attention_mask=attention_mask, labels=y)
         return {
                 'loss': loss
         }

@@ -1,4 +1,4 @@
-
+setting: 'mtl'
 solver:
   num_workers: 8
   batch_size: 128

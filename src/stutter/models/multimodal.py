@@ -87,7 +87,7 @@ class MultiModalClassification(nn.Module):
       self.projector = nn.Linear(1024, 4096)
       self.classifier = nn.Linear(4096, self.num_labels)
       
-    def forward(self, pixel_values,input_values, attention_mask, labels):
+    def forward(self, pixel_values, input_values, attention_mask, labels):
       audio = self.audio_extractor(input_values,attention_mask)
       video = self.video_extractor(pixel_values)
       x = torch.cat((video, audio), dim=1)

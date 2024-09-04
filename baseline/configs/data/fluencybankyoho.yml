@@ -1,6 +1,0 @@
-
-data: 
-  name: 'fluencybankyoho'
-  root: 'datasets/fluencybank/ds_5/reading/'
-  label_path: datasets/fluencybank/our_annotations/reading_split.json
-

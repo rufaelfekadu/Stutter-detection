@@ -1,0 +1,6 @@
+
+data: 
+  name: 'fluencybankslow'
+  root: datasets/fluencybank/ds_5/reading/clips/audio
+  label_path: datasets/fluencybank/ds_temp/reading/any_2_df.csv
+

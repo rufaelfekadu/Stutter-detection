@@ -1,0 +1,8 @@
+
+data: 
+  name: 'fluencybanksed'
+  root: 'datasets/fluencybank/ds_25/reading/clips/audio'
+  label_path: datasets/fluencybank/ds_30/reading/sed_labels.pt
+  split_file: 'datasets/fluencybank/our_annotations/reading_split.json'
+  encoder_name: 'wav2vec2-b'
+

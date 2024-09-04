@@ -14,7 +14,7 @@ class LSTMModel(nn.Module):
         self.fc2 = nn.Linear(self.hidden_size, self.output_size)
 
     def forward(self, x: torch.Tensor, tasks=['t1', 't2']):
-
+        # x->(batch_size, seq_len, input_size)
         # x = x.permute(0, 2, 1)
 
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
