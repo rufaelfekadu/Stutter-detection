@@ -11,6 +11,8 @@ from stutter.models import build_model
 from stutter.utils.meters import LossMeter, AverageMeter
 from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER, binary_acc, binary_f1, iou_metric,compute_video_classification_metrics
 from stutter.utils.loss import build_loss, CCCLoss
+from stutter.utils.data import deconstruct_labels
+from stutter.utils.misc import plot_sample
 import librosa
 import matplotlib.pyplot as plt
 from transformers import AutoModelForAudioClassification, TrainingArguments, VivitForVideoClassification, VivitConfig, AdamW
@@ -69,24 +71,43 @@ class Trainer(BaseTrainer):
             setattr(self, metric, metric_bank[metric])
 
         self._init_meters()
-        self.train_loader, self.val_loader, self.test_loader = get_dataloaders(cfg)
+        self.train_loader, self.val_loader, self.test_loader = self.get_dataloaders()
 
         # build model
-        self.model, self.optimizer, self.scheduler = build_model(cfg)
+        self.model, self.optimizer, self.scheduler, self.loss = self.get_model()
         self.model = self.model.to(self.device)
-        self.criterion = build_loss(cfg)
 
         self.best_val_loss = float('inf')
         self.patience = cfg.solver.es_patience
         print(self.model)
-        # if torch.cuda.device_count() > 1:
+
+        # if len(cfg.solver.device) > 1:
         #     print("Using", torch.cuda.device_count(), "GPUs")
         #     self.model = torch.nn.DataParallel(self.model)
+
+        print(f'Number of trainable parameters: {sum(p.numel() for p in self.model.parameters() if p.requires_grad)}')
+        print(f'Number of total parameters: {sum(p.numel() for p in self.model.parameters())}')
+
+        # assert eval_steps % log_steps == 0, 'eval_steps should be divisible by log_steps'
+        if self.cfg.solver.eval_steps > len(self.train_loader):
+            self.cfg.solver.eval_steps = len(self.train_loader)
+            print(f'eval_steps is greater than the number of batches in the train_loader. Setting eval_steps to {len(self.train_loader)}')
+
+        if self.cfg.solver.log_steps > len(self.train_loader):
+            self.cfg.solver.log_steps = len(self.train_loader)
+            print(f'log_steps is greater than the number of batches in the train_loader. Setting log_steps to {len(self.train_loader)}')
+
+    def get_dataloaders(self):
+        return get_dataloaders(self.cfg)
+
+    def get_model(self):
+        return *build_model(self.cfg), build_loss(self.cfg)
 
     def _init_meters(self):
         for key in self.tasks:
             self.train_meters[f'{key}_train_loss'] = LossMeter(name=f'{key}_train_loss', writer=self.logger)
             self.val_meters[f'{key}_val_loss'] = LossMeter(name=f'{key}_val_loss', writer=self.logger)
+            self.test_meters[f'{key}_test_loss'] = LossMeter(name=f'{key}_test_loss', writer=self.logger)
             for metric in self.metrics:
                 self.test_meters[f'{key}_test_{metric}'] = AverageMeter(name=f'{key}_test_{metric}', writer=self.logger)
                 self.test_meters[f'{key}_val_{metric}'] = AverageMeter(name=f'{key}_val_{metric}', writer=self.logger)
@@ -135,7 +156,6 @@ class Trainer(BaseTrainer):
     
     def validate(self):
         self.stage = 'val'
-        tasks = self.tasks
         self.model.eval()
         self._reset_meters(self.val_meters)
 
@@ -153,12 +173,9 @@ class Trainer(BaseTrainer):
                 self.scheduler.step(total_loss/len(self.val_loader))
             else:
                 self.scheduler.step()
-            # self.scheduler.step(self.val_meters[f'{key}_val_loss'].avg)
-            # self.scheduler.step(self.epoch)
 
             self._write_meters(self.val_meters)
-            #  Early Stopping
-            # total_loss = sum([self.val_meters[f'{key}_val_loss'].avg for key in tasks])
+
             if total_loss < self.best_val_loss:
                 self.best_val_loss = total_loss
                 self.best_epoch = self.epoch
@@ -169,8 +186,13 @@ class Trainer(BaseTrainer):
                 if self.patience == 0:
                     print(f"Early Stopping at epoch {self.epoch} \nbest epoch at {self.best_epoch} with loss {self.best_val_loss}")
                     return True
+        
+        # self.after_validation()
         self.model.train()
         return False
+
+    def after_validation(self):
+        pass
 
     def test(self, loader=None, name='test'):
         loader = loader or self.test_loader
@@ -236,7 +258,7 @@ class MTLTrainer(Trainer):
         self.num_classes = cfg.model.output_size
         self.test_preds = []
         self.test_labels = []
-        
+
     def train_step(self, batch):
 
         x, y = self.parse_batch_train(batch)
@@ -249,9 +271,9 @@ class MTLTrainer(Trainer):
             loss1 = self.criterion['t1'](pred_t1, y_t1)
 
         if 't2' in self.tasks:
-            if  not isinstance(self.criterion['t2'], CCCLoss):
-                y_t2 = (y>=2).float()
-            loss2 = self.criterion['t2'](pred_t2, y_t2)
+            # if  not isinstance(self.criterion['t2'], CCCLoss):
+            #     y_t2 = (y>=2).float()
+            loss2 = self.criterion['t2'](pred_t2, y)
 
         loss = loss1 + loss2
         loss.backward()
@@ -271,9 +293,9 @@ class MTLTrainer(Trainer):
             y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).long()
             loss1 = self.criterion['t1'](pred_t1, y_t1)
         if 't2' in self.tasks:
-            if  not isinstance(self.criterion['t2'], CCCLoss):
-                y_t2 = (y>=2).float()
-            loss2 = self.criterion['t2'](pred_t2, y_t2)
+            # if  not isinstance(self.criterion['t2'], CCCLoss):
+            #     y_t2 = (y>=2).float()
+            loss2 = self.criterion['t2'](pred_t2, y)
         return{
             't1': loss1.item(),
             't2': loss2.item()
@@ -292,11 +314,11 @@ class MTLTrainer(Trainer):
             self.test_labels.append(y_t1.cpu().numpy())
 
         if 't2' in self.tasks:
-            y_t2 = (y>=2).int()
+            # y_t2 = (y>=2).int()
             pred_t2 = (torch.sigmoid(pred_t2)>=0.5).int()
-            metrics_2 = self.compute_metrics(pred_t2, y_t2)
+            metrics_2 = self.compute_metrics(pred_t2, y)
             self.test_preds.append(pred_t2.cpu().numpy())
-            self.test_labels.append(y_t2.cpu().numpy())
+            self.test_labels.append(y.cpu().numpy())
 
         return {
             't1': metrics_1,
@@ -330,22 +352,40 @@ class MTLTrainer(Trainer):
             # log the confusion matrix
             self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
 
-class YohoTrainer(Trainer):
+class SedTrainer2(Trainer):
+
     def __init__(self, cfg, logger=None, metrics=['acc']):
-        super(YohoTrainer, self).__init__(cfg, logger, metrics = metrics)
+        super(SedTrainer2, self).__init__(cfg, logger, metrics = metrics)
         self.criterion = self.criterion['t2']
+        self.test_mfcc = []
         self.test_preds = []
         self.test_labels = []
-        self.num_classes = 11
+        self.test_fnames = []
+        self.test_encoder_outputs = []
+        self.val_mfcc = []
+        self.val_outputs = []
+        self.val_preds = []
+        
+        self.num_classes = 5
+
+        # print the number of trainable parameters
+
+    def hook_fn(self, module, input, output):
+        self.test_encoder_outputs.append(output)
 
     def parse_batch_train(self, batch):
         x = batch['mel_spec']
         y = batch['label']
         return x.to(self.device), y.to(self.device)
     
+    def parse_batch_test(self, batch):
+        x = batch['mel_spec']
+        y = batch['label']
+        fname = batch['file_path']
+        return x.to(self.device), y.to(self.device), fname
+    
     def train_step(self, batch):
         x, y = self.parse_batch_train(batch)
-
         pred = self.model(x.squeeze(1))
         loss = self.criterion(pred, y)
         loss.backward()
@@ -354,18 +394,17 @@ class YohoTrainer(Trainer):
         return{
             't2': loss.item()
         }
-
-    # def test_step(self, batch):
-
-    #     x, y = self.parse_batch_train(batch)
-    #     preds = self.model(x.squeeze(1))
-    #     self.test_preds.append(preds)
-    #     self.test_labels.append(y)
-    #     metrics = self.compute_metrics(preds, y)
-
-    #     return {
-    #         't2': metrics
-    #     }
+    
+    def val_step(self, batch):
+        x, y = self.parse_batch_train(batch)
+        pred = self.model(x.squeeze(1))
+        loss = self.criterion(pred, y)
+        self.val_outputs.append(y)
+        self.val_preds.append(pred)
+        self.val_mfcc.append(x)
+        return{
+            't2': loss.item()
+        }
 
     def test(self, loader=None, name='test'):
         # generate the reference txt_files
@@ -373,16 +412,106 @@ class YohoTrainer(Trainer):
         self.stage = 'test'
         self.model.eval()
         self._reset_meters(self.test_meters)
+        handle = self.model.encoder.register_forward_hook(self.hook_fn)
+        with torch.no_grad():
+            for batch in loader:
 
-        for batch in loader:
-            x, y = self.parse_batch_train(batch)
-            preds = self.model(x.squeeze(1))
-            self.test_preds.append(preds)
-            self.test_labels.append(y)
+                x, y, fname = self.parse_batch_test(batch)
+                preds = self.model(x.squeeze(1).squeeze(1), output_attentions=True)
+                test_loss = self.criterion(preds, y)
+                self.test_mfcc.append(x)
+                self.test_preds.append(preds)
+                self.test_fnames.append(fname)
+                self.test_labels.append(y)
+                self._update_meter(self.test_meters, f't2_test_loss', test_loss.item())
         
-        self.test_preds
-        
+        self._write_meters(self.test_meters)
+        handle.remove()
+        self.after_test()
 
+    def after_test(self):
+        mfcc = torch.cat(self.test_mfcc, axis=0)
+        preds = torch.concat(self.test_preds, axis=0) # (N, 22, 2+num_classes)
+        fnames = self.test_fnames[0]
+        y = torch.cat(self.test_labels, axis=0)
+        preds_mask = (torch.sigmoid(preds) >= 0.5).int()
+
+        # write the predictions to a file
+        for i,fname in tqdm(enumerate(fnames), desc='Writing predictions', total=len(fnames)):
+            pred_fname = fname.replace('_ref.txt', '_pred.txt')
+            pred = preds_mask[i,:,:]
+            with open(pred_fname, 'w') as f:
+                events = deconstruct_labels(pred, clip_duration=30, sr=16000, smooth=3)
+                for event in events:
+                    f.write(f'{event[0]},{event[1]},{event[2]}\n')
+        
+        # plot some of the encoder outputs
+        output = torch.concat(self.test_encoder_outputs, axis=0)
+        preds = torch.nn.functional.interpolate(preds.unsqueeze(0), size=(output.size(1), output.size(2)), mode='nearest').squeeze(0)
+        preds_mask = torch.nn.functional.interpolate(preds_mask.float().unsqueeze(0), size=(output.size(1), output.size(2)), mode='nearest').squeeze(0)
+        resized_y = torch.nn.functional.interpolate(y.unsqueeze(0), size=(output.size(1), output.size(2)), mode='nearest').squeeze(0)
+        for i in range(5):
+            fig, ax = plt.subplots(5, figsize=(20,10))
+            normalized_output = (output[i] - output[i].min()) / (output[i].max() - output[i].min())
+            # normalized_mfcc = (mfcc[i] - mfcc[i].min()) / (mfcc[i].max() - mfcc[i].min())
+
+            # ax[0].imshow(normalized_mfcc.cpu().numpy().T, aspect='auto', cmap='inferno')
+            # ax[0].set_title('MFCC Features')
+
+            ax[1].imshow(output[i].cpu().numpy().T, aspect='auto', cmap='inferno')
+            ax[1].set_title('wav2vec2 Features')
+
+            ax[2].imshow(preds[i].cpu().numpy().T, aspect='auto', cmap='inferno')
+            ax[2].set_title('logits')
+        
+            ax[3].imshow(preds_mask[i].cpu().numpy().T, aspect='auto', cmap='inferno')
+            ax[3].set_title('Predictions')
+
+            ax[4].imshow(resized_y[i].cpu().numpy().T, aspect='auto', cmap='inferno')
+            ax[4].set_title('Ground Truth')
+            
+            for a in ax:
+                a.set_xticks([])
+                a.set_yticks([])
+
+            # Add a single color bar
+            cbar = fig.colorbar(ax[1].images[0], ax=ax, orientation='vertical', fraction=0.02, pad=0.04)
+            cbar.ax.tick_params(labelsize=8)
+
+            plt.savefig(f'outputs/encoder_output_{i}.png')
+            self.logger.add_figure(f'test/encoder_output_{i}', fig)
+                
+class SedTrainer(Trainer):
+    def __init__(self, cfg, logger=None, metrics=['acc']):
+        super(SedTrainer, self).__init__(cfg, logger, metrics = metrics)
+        self.criterion = self.criterion['t2']
+        self.test_preds = []
+        self.test_labels = []
+        self.test_fnames = []
+        self.num_classes = 5
+
+    def parse_batch_train(self, batch):
+        x = batch['mel_spec']
+        y = batch['label']
+        return x.to(self.device), y.to(self.device)
+    
+    def parse_batch_test(self, batch):
+        x = batch['mel_spec']
+        y = batch['label']
+        fname = batch['file_path']
+        return x.to(self.device), y.to(self.device), fname
+    
+    def train_step(self, batch):
+        x, y = self.parse_batch_train(batch)
+        pred = self.model(x.squeeze(1))
+        loss = self.criterion(pred, y)
+        loss.backward()
+        self.optimizer.step()
+
+        return{
+            't2': loss.item()
+        }
+    
     def val_step(self, batch):
         x, y = self.parse_batch_train(batch)
         pred = self.model(x.squeeze(1))
@@ -391,28 +520,42 @@ class YohoTrainer(Trainer):
             't2': loss.item()
         }
     
+    def test(self, loader=None, name='test'):
+        # generate the reference txt_files
+        loader = loader or self.test_loader
+        self.stage = 'test'
+        self.model.eval()
+        self._reset_meters(self.test_meters)
+
+        with torch.no_grad():
+            for batch in loader:
+                x, y, fname = self.parse_batch_test(batch)
+                preds = self.model(x.squeeze(1))
+                test_loss = self.criterion(preds, y)
+                self.test_preds.append(preds)
+                self.test_fnames.append(fname)
+                self._update_meter(self.test_meters, f't2_test_loss', test_loss.item())
+        
+        self._write_meters(self.test_meters)
+        self.after_test()
+
     def after_test(self):
         label_map = LabelMap()
-        preds = torch.concat(self.test_preds, axis=0)
-        labels = torch.concat(self.test_labels, axis=0)
-
-        preds[:,:,2:-1] = (torch.sigmoid(preds[:,:,2:-1]) >= 0.5).int()
-        
-        label_time = labels[:,:,0:2]
-        # visualize the predictions and the label plot the time span and label
-        breakpoint()
-        for i in range(5):
-            events = preds[i,:,:]
-            plt.figure()
-            for j in range(events.size(0)):
-                if (events[j,2:-1] >=0.5)== 1:
-                    plt.plot(events[j,0:2], [1, 1], color='-ro', label=label_map.strfromlabel(events[j,2:]))
-            
-            ground_truth = labels[i,:]
-            for j in range(ground_truth.size(0)):
-                if ground_truth[j] == 1:
-                    plt.plot(label_time[j,0:2], [2, 2], color='-bo', label=label_map.strfromlabel(ground_truth[j,2:]))
-         
+        preds = torch.concat(self.test_preds, axis=0) # (N, 22, 2+num_classes)
+        fnames = self.test_fnames[0]
+        preds[:,:,2:] = (torch.sigmoid(preds[:,:,2:]) >= 0.5).int()
+        # write the predictions to a file
+        for i,fname in enumerate(fnames):
+            pred_fname = fname.replace('.txt', '_pred.txt')
+            pred = preds[i,:,:]
+            with open(pred_fname, 'w') as f:
+                for j in range(pred.size(0)):
+                    for k, l in enumerate(pred[j,2:]):
+                        if l == 1 and pred[j,1] > 0:
+                            start_l = pred[j,0].item()
+                            end_l = pred[j,1].item()
+                            f.write(f'{round(start_l,2)},{round(end_l,2)},{label_map.description[label_map.core[k]]}\n')
+             
 class Wave2vecTrainer(Trainer):
     def __init__(self, cfg, logger=None, metrics=['acc']):
         super(Wave2vecTrainer, self).__init__(cfg, logger, metrics = metrics)
@@ -494,15 +637,3 @@ class VivitTrainer():
         #                          num_proc=self.cfg.solver.num_workers)
         # testset = testset.prepare_dataset()
         self.trainer.evaluate(self.testset)
-        
-        
-        
-trainer_registery = {
-    'mtl': MTLTrainer,
-    'yoho': YohoTrainer,
-    'vivit': VivitTrainer,
-}
-
-def build_trainer(cfg, logger=None, metrics=['f1']):
-    trainer = trainer_registery[cfg.setting](cfg, logger, metrics)
-    return trainer
