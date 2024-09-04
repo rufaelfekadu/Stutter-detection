@@ -5,6 +5,7 @@ import librosa
 import numpy as np
 import pandas as pd
 import os.path as op
+import soundfile as sf
 from tqdm import tqdm
 import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed, ProcessPoolExecutor
@@ -206,25 +207,33 @@ def deconstruct_labels(labels, sr=16000, clip_duration=30, smooth=0):
 
 
 # Video processing functions
-STUTTER_CLASSES = ['SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME']
+
+STUTTER_CLASSES = ['SR', 'ISR', 'MUR', 'P', 'B', 'V', 'FG', 'HM']
 PRIMARY_EVENT = ['SR', 'ISR', 'MUR', 'P', 'B']
-SECONDARY_EVENT = ['NV','V', 'FG', 'HM', 'ME']
+SECONDARY_EVENT = ['V', 'FG', 'HM']
 
 def custom_aggregation(group):
     # Calculate the number of rows for the annotator in the group
     row_count = len(group)
     aggregations ={
-        'T': 'max',
-        'stutter_event': 'max',
-        'primary_event': 'max',
-        'secondary_event': 'max',
-        'stutter_type': 'max',
+        'V': 'max',
+        'FG': 'max',
+        'HM': 'max',
+        'ME': 'max',
+        'SR': 'max',
+        'ISR': 'max',
+        'MUR': 'max',
+        'P': 'max',
+        'B': 'max'
     }
     group = group.agg(aggregations)
     group['events_count'] = row_count    
     return group
 
-def make_video_dataframe(manifest_file, annotator, root:str = None, extension = ".mp4", aggregate:bool = False, agg_function = custom_aggregation, split:str = "train"):
+def most_common(x):
+    return x.mode().iloc[0]
+
+def make_video_dataframe(manifest_file, annotator, root:str = None, aggregate:bool = False, split:str = "train", agg_function = custom_aggregation, extension = ".mp4"):
     '''
     manifest_file: path to the manifest file
     annotator: path to the annotator file
@@ -234,26 +243,39 @@ def make_video_dataframe(manifest_file, annotator, root:str = None, extension = 
     '''
     df = pd.read_csv(manifest_file)
     df = df[df['split'] == split]
+    df.fillna(0, inplace=True)
+    df['file_name'] = df['media_file'] + "/" + df['media_file'] + "_" +df ['clip_id'].astype(str) + extension
+    full_data = df[['file_name']].drop_duplicates()
     print(f"Total {split} samples: {len(df)}")
     if annotator is not None:
-        df = df[df['annotator'].isin([annotator, np.nan]) ]
-        print(f"Annotator {annotator} has {len(df)} samples")
-    df['annotator'] = df['annotator'].fillna("None")
-    df['file_name'] = df['media_file'] + "/" + df['media_file'] + "_" +df ['clip_id'].astype(str) + extension
-    df['stutter_event'] = df[STUTTER_CLASSES].apply(lambda x: (x > 0).any(), axis=1)
-    df['primary_event'] = df[PRIMARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
-    df['secondary_event'] = df[SECONDARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
-    df['stutter_type'] = df[['primary_event', 'secondary_event']].apply(lambda x: "Both" if x['primary_event'] and x['secondary_event'] else "Primary" if x['primary_event'] else "Secondary" if x['secondary_event'] else "None", axis=1)
-    df['secondary_category'] = df[SECONDARY_EVENT].apply(lambda x: '_'.join(df[SECONDARY_EVENT].columns[x == 1]), axis=1)
+        df = df[df['annotator'].isin([annotator, 0])]
+    print(f"Annotator {annotator} has {len(df)} samples")
     if aggregate and agg_function is not None and annotator is not None:
         df = df.groupby('file_name').apply(agg_function).reset_index()
     else:
         df = df.groupby(['file_name', 'annotator']).apply(agg_function).reset_index()
-        df = df.groupby('file_name').apply(agg_function).reset_index()
+        df = df.groupby('file_name').agg({'SR':most_common,
+                                        'V': most_common,
+                                        'FG': most_common,
+                                        'HM': most_common,
+                                        'ME': most_common,
+                                        'SR': most_common,
+                                        'ISR': most_common,
+                                        'MUR': most_common,
+                                        'P': most_common,
+                                        'B': most_common}).reset_index()
+    df = pd.merge(full_data, df, on='file_name', how='left').fillna(0)
+    df['stutter_event'] = df[STUTTER_CLASSES].apply(lambda x: (x > 0).any(), axis=1)
+    df['primary_event'] = df[PRIMARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
+    df['secondary_event'] = df[SECONDARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
+    df['stutter_type'] = df[['primary_event', 'secondary_event']].apply(lambda x: "Both" if x['primary_event'] and x['secondary_event'] else "Primary" if x['primary_event'] else "Secondary" if x['secondary_event'] else "None", axis=1)
     if root is not None:
         df['file_name'] = df['file_name'].apply(lambda x: op.join(root, x))
+    df['secondary_category'] = df[SECONDARY_EVENT].values.tolist()
+    df['primary_category'] = df[PRIMARY_EVENT].values.tolist()
+    df['stutter_category'] = df[STUTTER_CLASSES].values.tolist()
     print(f"Total samples after aggregation: {len(df)}")
-    print(f"primary_event:  \n {df.primary_event.value_counts()}  \n______\n secondary_event: \n  {df.secondary_event.value_counts()} \n______\n stutter_type:  \n {df.stutter_type.value_counts()}\n")
+    print(f"{df.describe()}")
     return df
 
 def sample_frame_indices(clip_len, frame_sample_rate, seg_len):
@@ -297,13 +319,19 @@ def read_video_pyav(container, indices):
     return new
 
 
-def prepare_hf_dataset_video(example,processor, label_type:str = "secondary_event", clip_len=10):
+def prepare_hf_dataset_video(example,processor,extractor, label_type:str = "secondary_event", clip_len=10):
     container = av.open(example['file_name'])
     indices = sample_frame_indices(clip_len=clip_len, frame_sample_rate=2, seg_len=container.streams.video[0].frames)
     video = read_video_pyav(container=container, indices=indices)
     inputs = processor(list(torch.tensor(video)), return_tensors='pt', do_resize=True)
     inputs['pixel_values'] = torch.tensor(inputs['pixel_values']).squeeze()
     inputs['labels'] = example[label_type]
+    del video,indices,container
+    audio, sr = sf.read(example['file_name'].replace(".mp4", ".wav").replace("video", "audio"))
+    audio_features = extractor(audio, sampling_rate=sr ,return_tensors='pt')
+    inputs['input_values'] = audio_features['input_values']
+    inputs['attention_mask'] = audio_features['attention_mask']
+    del audio, sr, audio_features
     return inputs
 
 if __name__ == "__main__":
