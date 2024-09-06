@@ -205,7 +205,11 @@ def deconstruct_labels(labels, sr=16000, clip_duration=30, smooth=0):
 
     return events
 
-
+def extract_mfcc(x, n_mfcc=40, n_fft=2048):
+    y, sr = librosa.load(x)
+    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc, n_fft=n_fft)
+    # mfcc_mean = np.mean(mfcc.T, axis=0)
+    return mfcc
 # Video processing functions
 
 STUTTER_CLASSES = ['SR', 'ISR', 'MUR', 'P', 'B', 'V', 'FG', 'HM']

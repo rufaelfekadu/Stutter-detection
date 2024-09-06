@@ -8,13 +8,13 @@ model:
 solver:
   num_workers: 8
   batch_size: 30
-  epochs: 25
-  lr: 5e-4
+  epochs: 50
+  lr: 1e-3
   es_patience: 30
   device: 'cuda'
   optimizer: 'sgd'
   scheduler: 'cosine'
   factor: 0.5
-  min_lr: 1e-5
+  min_lr: 3e-5
   log_steps: 30
   eval_steps: 60

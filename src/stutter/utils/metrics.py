@@ -127,9 +127,9 @@ def weighted_accuracy(predictions, labels):
 
 def f1_score_(predictions, labels):
     # predictions = torch.argmax(predictions, dim=1)
-    # predictions = torch.sigmoid(predictions)
-    # predictions = (predictions > 0.5).float()
-    f1 = f1_score(predictions.cpu().numpy(), labels.cpu().numpy(), average='macro')
+    predictions = torch.sigmoid(predictions)
+    predictions = (predictions > 0.5).float()
+    f1 = f1_score(predictions.cpu().numpy(), labels.cpu().numpy(), average='weighted')
     return f1
 
 def f1_score_per_class(predictions, labels):
@@ -141,9 +141,9 @@ def f1_score_per_class(predictions, labels):
     for i in range(num_classes):
         pred = predictions[:, i]
         label = labels[:, i]
-        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy(), average='macro'))    
+        f1.append(f1_score(pred.cpu().numpy(), label.cpu().numpy()))    
     # append any class
-    predictions_any =  (torch.sum(predictions[:, :num_classes-1], dim=1) >0 ).int()
-    labels_any = (torch.sum(labels[:, :num_classes-1], dim=1) >0).int()
-    f1.append(f1_score(predictions_any.cpu().numpy(), labels_any.cpu().numpy(), average='macro'))
+    predictions_any =  (torch.sum(predictions, dim=1) >0 ).int()
+    labels_any = (torch.sum(labels, dim=1) >0).int()
+    f1.append(f1_score(predictions_any.cpu().numpy(), labels_any.cpu().numpy()))
     return f1

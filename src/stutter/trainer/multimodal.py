@@ -1,10 +1,11 @@
 
 from .trainer import Trainer
 from stutter.models.multimodal import MultiModalClassification
-from stutter.utils import AverageMeter
+from stutter.utils.meters import AverageMeter
 from transformers import TrainingArguments, Wav2Vec2Config, VivitConfig
-from datasets import load_from_disk
+from datasets import load_from_disk, Dataset
 import torch
+from tqdm import tqdm
 from torch.utils.data import DataLoader
 from sklearn.metrics import f1_score
 
@@ -17,6 +18,8 @@ class MultiModalTrainer(Trainer):
         self.val_meters['f1_weighted'] = AverageMeter('val_f1_weighted', writer=self.logger)
         self.val_meters['f1_macro'] = AverageMeter('val_f1_macro', writer=self.logger)
         self.val_meters['f1_any'] = AverageMeter('val_f1_any', writer=self.logger)
+        self.val_meters['lr'] = AverageMeter('lr', writer=self.logger)
+        self.val_meters['loss'] = AverageMeter('val_loss', writer=self.logger)
         
         for classes in STUTTER_CLASSES:
             self.val_meters[classes] = AverageMeter(f'val_{classes}_f1', writer=self.logger)
@@ -27,6 +30,7 @@ class MultiModalTrainer(Trainer):
         self.test_meters['f1_weighted'] = AverageMeter('test_f1_weighted', writer=self.logger)
         self.test_meters['f1_macro'] = AverageMeter('test_f1_macro', writer=self.logger)
         self.test_meters['f1_any'] = AverageMeter('test_f1_any', writer=self.logger)
+        self.test_meters['loss'] = AverageMeter('test_loss', writer=self.logger)
         for classes in STUTTER_CLASSES:
             self.test_meters[classes] = AverageMeter(f'test_{classes}_f1', writer=self.logger)
 
@@ -50,10 +54,10 @@ class MultiModalTrainer(Trainer):
         dataset = df['train']
         val_dataset = df['test']
         test_dataset =load_from_disk("outputs/fluencybank/dataset/stutter_hf/ds_5_multimodal_test")
-        dataset = dataset.map(lambda x: {"input_values": torch.tensor(x["input_values"][0]), 'attention_mask':torch.tensor(x['attention_mask'][0]), "labels": torch.tensor(x["labels"])})
-        val_dataset = val_dataset.map(lambda x: {"input_values": torch.tensor(x["input_values"][0]), 'attention_mask':torch.tensor(x['attention_mask'][0]), "labels": torch.tensor(x["labels"])})
-        test_dataset = test_dataset.map(lambda x: {"input_values": torch.tensor(x["input_values"][0]), 'attention_mask':torch.tensor(x['attention_mask'][0]), "labels": torch.tensor(x["labels"])})
-        
+        dataset.set_format(type='torch', columns=[ 'pixel_values','input_values', 'attention_mask', 'labels'])
+        val_dataset.set_format(type='torch', columns=[ 'pixel_values','input_values', 'attention_mask', 'labels'])
+        test_dataset.set_format(type='torch', columns=[ 'pixel_values','input_values', 'attention_mask', 'labels'])
+             
         train_loder = DataLoader(dataset, batch_size=self.cfg.solver.batch_size, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False)
         test_loader = DataLoader(test_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False)
@@ -73,29 +77,95 @@ class MultiModalTrainer(Trainer):
 
     def parse_batch_train(self, batch):
         image = batch['pixel_values'].to(self.device)
-        audio = batch['input_values'].to(self.device)
-        attention_mask = batch['attention_mask'].to(self.device)
+        audio = batch['input_values'].squeeze(1).to(self.device)
+        attention_mask = batch['attention_mask'].squeeze(1).to(self.device)
         y = batch['labels'].to(self.device)
         return image, audio, attention_mask, y
     
     def train_step(self, batch):
         image, audio, attention_mask, y = self.parse_batch_train(batch)
         loss, logits = self.model(pixel_values=image, input_values=audio, attention_mask=attention_mask, labels=y)
+        loss.backward()
+        self.optimizer.step()
         return {
-                'loss': loss
+                'loss': loss.item()
         }
     
     def val_step(self, batch):
-        x, y, attention_mask = self.parse_batch_train(batch)
-        loss, logits = self.model(pixel_values=x, input_values=x, attention_mask=attention_mask, labels=y)
-        metrics = self.compute_metrics(logits, y)
-        metrics['val_loss'] = loss
+        image, audio, attention_mask, y = self.parse_batch_train(batch)
+        loss, logits = self.model(pixel_values=image, input_values=audio, attention_mask=attention_mask, labels=y)
+        metrics = self.compute_metrics(logits.cpu(), y.cpu())
+        metrics['loss'] = loss.item()
         return metrics
 
     def test_step(self, batch):
-        x, y, attention_mask = self.parse_batch_train(batch)
-        loss, logits = self.model(pixel_values=x, input_values=x, attention_mask=attention_mask, labels=y)
-        metrics = self.compute_metrics(logits, y)
-        metrics['loss'] = loss
-        return metrics
+        image, audio, attention_mask, y = self.parse_batch_train(batch)
+        loss, logits = self.model(pixel_values=image, input_values=audio, attention_mask=attention_mask, labels=y)
+        # metrics = self.compute_metrics(logits, y)
+        # metrics['loss'] = loss.item()
+        return loss, logits, y
 
+    def validate(self):
+        self.stage = 'val'
+        self.model.eval()
+        self._reset_meters(self.val_meters)
+
+        with torch.no_grad():
+            total_loss = 0
+            for batch in self.val_loader:
+                losses = self.val_step(batch)
+                total_loss += losses['loss']
+                for key, loss in losses.items():
+                    self._update_meter(self.val_meters, f'{key}', loss)
+
+            
+            # log the learning rate
+            self.val_meters['lr'].update(self.scheduler.get_last_lr()[0])
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(total_loss/len(self.val_loader))
+            else:
+                self.scheduler.step()
+
+            self._write_meters(self.val_meters)
+            total_loss /= len(self.val_loader)
+
+            if total_loss < self.best_val_loss:
+                self.best_val_loss = total_loss
+                self.best_epoch = self.epoch
+                self.save_model('best_checkpoint.pt')
+                self.patience = self.cfg.solver.es_patience
+                print(f"Saving best model at epoch {self.epoch} with loss {self.best_val_loss}")
+            else:
+                self.patience -= 1
+                if self.patience == 0:
+                    print(f"Early Stopping at epoch {self.epoch} \nbest epoch at {self.best_epoch} with loss {self.best_val_loss}")
+                    return True
+        
+        # self.after_validation()
+        self.model.train()
+        return False
+    def test(self, loader=None, name='test'):
+        loader = loader or self.test_loader
+        self.stage = 'test'
+        # self.load_model()
+        self.model.eval()
+        self._reset_meters(self.test_meters)
+        self.preds = []
+        self.labels = []    
+        with torch.no_grad():
+            for batch in tqdm(loader, desc='Evaluating Test Set', total=len(loader)):
+                loss, logits, labels = self.test_step(batch)
+                self.preds.append(logits)
+                self.labels.append(labels)
+        logits = torch.cat(self.preds, axis=0)
+        del self.preds
+        y = torch.cat(self.labels, axis=0)              
+        del self.labels 
+        metrics = self.compute_metrics(logits.cpu(), y.cpu())
+        metrics['loss'] = loss.item()
+        for key_metric, val in metrics.items():
+            print(key_metric, val)
+            self._update_meter(self.test_meters, f'{key_metric}', val)
+            
+        self._write_meters(self.test_meters)
+        self.after_test()

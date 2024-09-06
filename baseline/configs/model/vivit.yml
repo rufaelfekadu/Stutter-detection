@@ -1,17 +1,28 @@
 setting: 'vivit'
 
+tasks: ['t2']
+
 model:
   name: 'vivit'
+  output_size: 3
   vivit:
     num_frames: 10
     video_size: [10, 224, 224]
 
 solver:
   num_workers: 1
-  batch_size: 20
-  epochs: 10
+  batch_size: 40
+  epochs: 25
+  lr: 5e-4
+  es_patience: 30
   device: 'cuda'
-  log_steps: 10
+  optimizer: 'sgd'
+  scheduler: 'cosine'
+  factor: 0.5
+  min_lr: 1e-5
+  log_steps: 30
+  eval_steps: 60
+
 
 data:
   name: 'fluencybank'

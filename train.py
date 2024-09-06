@@ -13,7 +13,7 @@ warnings.filterwarnings("ignore")
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model')
     parser.add_argument('--data_config', type=str, default='baseline/configs/data/fluencybanksed.yml')
-    parser.add_argument('--model_config', type=str, default='baseline/configs/model/whisperyoho.yml')
+    parser.add_argument('--model_config', type=str, default='baseline/configs/model/vivit.yml')
     parser.add_argument('--logger', action='store_true')
     parser.add_argument('--opts', nargs='*', default=[])
     args = parser.parse_args()
@@ -22,12 +22,14 @@ def parse_args():
 def main(cfg):
 
     logger = WandbLogger(cfg) if args.logger else None
-    metrics = ['f1']
+    metrics = ['f1_macro']
 
     trainer = build_trainer(cfg, logger, metrics)
     
-    trainer.train()
-    # trainer.load_model()
+    # trainer.train()
+    # print("Loading model...")
+    trainer.load_model()
+    # trainer.train()
     trainer.test()
 
 

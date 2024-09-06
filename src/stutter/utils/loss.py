@@ -9,9 +9,9 @@ class CrossEntropyLoss(nn.Module):
         super(CrossEntropyLoss, self).__init__()
 
     def forward(self, y_pred, y_true):
-        y_pred = F.softmax(y_pred, dim=1)
-        # y_pred = torch.argmax(y_pred, dim=1)
-        loss = F.cross_entropy(y_pred, y_true)
+        # y_pred = F.softmax(y_pred, dim=1)
+        # y_pred = torch.argmax(y_pred, dim=1).float()
+        loss = F.cross_entropy(y_pred, y_true.long(), weight=torch.tensor(0.9).to(y_true.device))
         return loss
 
 class SedLoss(nn.Module):

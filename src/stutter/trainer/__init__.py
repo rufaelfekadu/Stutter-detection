@@ -5,7 +5,7 @@ trainer_registery = {
     'mtl': MTLTrainer,
     'yoho': SedTrainer,
     'sed': SedTrainer2,
-    'vivit': VivitTrainer,
+    'vivit': VivitForStutterTrainer,
     'multimodal': MultiModalTrainer
 }
 

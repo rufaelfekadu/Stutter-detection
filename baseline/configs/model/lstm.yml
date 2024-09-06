@@ -1,4 +1,4 @@
-tasks: ['t2']
+tasks: ['t1']
 setting: 'mtl'
 # model
 model:
@@ -12,13 +12,13 @@ model:
 solver:
   num_workers: 8
   batch_size: 128
-  epochs: 300
+  epochs: 100
   lr: 0.01
-  es_patience: 100
+  es_patience: 40
   device: 'cuda'
   scheduler: 'plateau'
   factor: 0.5
-  patience: 50
+  patience: 20
   min_lr: 1e-5
   losses: ['bce']
   log_steps: 20
@@ -26,7 +26,18 @@ solver:
 
 loss:
   # weights: [0.96, 0.98, 0.95, 0.94, 0.8, 0.4] # weights for bce loss
-  alpha: [0.96, 0.96, 0.96, 0.96, 0.7, 0.6] # alpha for focal loss
+  weights: [1]
+  # weights: [7.29, 9.23, 27.94,3.96,2.268]
+  # alpha: [0.87, 0.97, 0.97,0.80,0.74] # alpha for focal loss
+  # alpha: [0.96, 0.96, 0.96, 0.96, 0.7, 0.6] # alpha for focal loss
   reduction: 'mean'
-  gamma: 2
+  gamma: 1.5
 
+data:
+  name: 'fluencybank'
+  annotation: "secondary_event"
+  aggregate: True
+  annotator: "A2"
+  split_strategy: "ds_5"
+  label_path: "datasets/fluencybank/ds_5/reading/total_df.csv"
+  root: "datasets/fluencybank/ds_5/reading/clips/audio/"

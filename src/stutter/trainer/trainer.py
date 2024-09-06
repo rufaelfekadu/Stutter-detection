@@ -8,16 +8,22 @@ from stutter.utils.annotation import LabelMap
 from stutter.data import get_dataloaders
 from stutter.data.hf_data import VivitVideoData
 from stutter.models import build_model
+from stutter.models.vivit import VivitForStutterClassification
 from stutter.utils.meters import LossMeter, AverageMeter
 from stutter.utils.metrics import f1_score_per_class, f1_score_, weighted_accuracy, multilabel_EER, binary_acc, binary_f1, iou_metric,compute_video_classification_metrics
 from stutter.utils.loss import build_loss, CCCLoss
 from stutter.utils.data import deconstruct_labels
 from stutter.utils.misc import plot_sample
+from stutter.utils.data import make_video_dataframe, extract_mfcc
 import librosa
 import matplotlib.pyplot as plt
 from transformers import AutoModelForAudioClassification, TrainingArguments, VivitForVideoClassification, VivitConfig, AdamW
 from transformers import Trainer as HuggingFaceTrainer
-
+from torch.utils.data import DataLoader
+from datasets import load_from_disk, load_metric, Dataset
+from sklearn.metrics import f1_score
+acc = load_metric("accuracy")
+f1 = load_metric("f1")
 
 metric_bank={
     'acc': lambda pred, y: (torch.argmax(pred, dim=1) == y).sum().item() / y.size(0),
@@ -74,7 +80,8 @@ class Trainer(BaseTrainer):
         self.train_loader, self.val_loader, self.test_loader = self.get_dataloaders()
 
         # build model
-        self.model, self.optimizer, self.scheduler, self.loss = self.get_model()
+        self.model, self.optimizer, self.scheduler, self.criterion = self.get_model()
+        # breakpoint()
         self.model = self.model.to(self.device)
 
         self.best_val_loss = float('inf')
@@ -105,9 +112,9 @@ class Trainer(BaseTrainer):
 
     def _init_meters(self):
         for key in self.tasks:
-            self.train_meters[f'{key}_train_loss'] = LossMeter(name=f'{key}_train_loss', writer=self.logger)
-            self.val_meters[f'{key}_val_loss'] = LossMeter(name=f'{key}_val_loss', writer=self.logger)
-            self.test_meters[f'{key}_test_loss'] = LossMeter(name=f'{key}_test_loss', writer=self.logger)
+            self.train_meters[f'{key}'] = LossMeter(name=f'{key}_train_loss', writer=self.logger)
+            self.val_meters[f'{key}'] = LossMeter(name=f'{key}_val_loss', writer=self.logger)
+            self.test_meters[f'{key}'] = LossMeter(name=f'{key}_test_loss', writer=self.logger)
             for metric in self.metrics:
                 self.test_meters[f'{key}_test_{metric}'] = AverageMeter(name=f'{key}_test_{metric}', writer=self.logger)
                 self.test_meters[f'{key}_val_{metric}'] = AverageMeter(name=f'{key}_val_{metric}', writer=self.logger)
@@ -139,7 +146,7 @@ class Trainer(BaseTrainer):
                 self.optimizer.zero_grad()
                 losses = self.train_step(batch)
                 for key, loss in losses.items():
-                    self._update_meter(self.train_meters, f'{key}_train_loss', loss)
+                    self._update_meter(self.train_meters, f'{key}', loss)
                     tq_obj.set_postfix({ key: loss })
 
                 if i % self.cfg.solver.log_steps == 0:
@@ -165,7 +172,7 @@ class Trainer(BaseTrainer):
                 losses = self.val_step(batch)
                 total_loss += sum(losses.values())
                 for key, loss in losses.items():
-                    self._update_meter(self.val_meters, f'{key}_val_loss', loss)
+                    self._update_meter(self.val_meters, f'{key}', loss)
 
             # log the learning rate
             self.val_meters['lr'].update(self.scheduler.get_last_lr()[0])
@@ -258,7 +265,42 @@ class MTLTrainer(Trainer):
         self.num_classes = cfg.model.output_size
         self.test_preds = []
         self.test_labels = []
+    
+    def get_dataloaders(self):
+        from pandarallel import pandarallel
+        pandarallel.initialize(progress_bar=True, nb_workers=8) 
+        PRIMARY_EVENT = ['SR', 'ISR', 'MUR', 'P', 'B'] #, "primary_event"
+        
+        train_df = make_video_dataframe(self.cfg.data.label_path,self.cfg.data.annotator, self.cfg.data.root, True, extension=".wav")
+        train_df['labels'] = train_df[PRIMARY_EVENT].apply(lambda x: x.values, axis=1)
+        train_df = train_df[["file_name", "labels"]]
 
+        train_df = Dataset.from_pandas(train_df).train_test_split(test_size=0.1, seed=42, shuffle=True)
+        train_df = train_df.map(lambda x: {'mfcc': extract_mfcc(x["file_name"])}, num_proc=8)
+        
+        test_df = make_video_dataframe(self.cfg.data.label_path,"Gold", self.cfg.data.root, True,split="test", extension=".wav")
+        test_df['labels'] = test_df[PRIMARY_EVENT].apply(lambda x: x.values, axis=1)
+        test_df = test_df[["file_name", "labels"]]
+
+        test_df = Dataset.from_pandas(test_df)
+        test_df = test_df.map(lambda x: {'mfcc': extract_mfcc(x["file_name"])}, num_proc=8)
+        # breakpoint()cont
+        train_df['train'].set_format(type='torch', columns=[ 'mfcc', 'labels'])
+        train_df['test'].set_format(type='torch', columns=[ 'mfcc', 'labels'])
+        test_df.set_format(type='torch', columns=[ 'mfcc', 'labels'])
+        train_loader = DataLoader(train_df['train'], batch_size=self.cfg.solver.batch_size, shuffle=True)
+        val_loader = DataLoader(train_df['test'], batch_size=self.cfg.solver.batch_size, shuffle=False)
+        test_loader = DataLoader(test_df, batch_size=self.cfg.solver.batch_size, shuffle=False)
+        
+        return train_loader, val_loader, test_loader
+    
+    def parse_batch_train(self, batch):
+        # x = torch.cat([batch['mel_spec'], batch['f0']], dim=1)
+        x = batch['mfcc']
+        y = batch['labels']
+        return x.to(self.device), y.to(self.device)
+    
+    
     def train_step(self, batch):
 
         x, y = self.parse_batch_train(batch)
@@ -266,9 +308,9 @@ class MTLTrainer(Trainer):
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
 
         if 't1' in self.tasks:
-            y_t1 = (y>=2).float()
-            y_t1 = (torch.sum(y[:, :-1], dim=1)>0).long()
-            loss1 = self.criterion['t1'](pred_t1, y_t1)
+            # y_t1 = (y>=2).float()
+            # y_t1 = (torch.sum(y[:, :-1], dim=1)>0).long()
+            loss1 = self.criterion['t1'](pred_t1.squeeze(), y[:,0])
 
         if 't2' in self.tasks:
             # if  not isinstance(self.criterion['t2'], CCCLoss):
@@ -289,9 +331,9 @@ class MTLTrainer(Trainer):
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss1, loss2 = torch.tensor(0), torch.tensor(0)
         if 't1' in self.tasks:
-            y_t1 = (y>=2).float()
-            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).long()
-            loss1 = self.criterion['t1'](pred_t1, y_t1)
+            # y_t1 = (y>=2).float()
+            # y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).long()
+            loss1 = self.criterion['t1'](pred_t1.squeeze(), y[:,0])
         if 't2' in self.tasks:
             # if  not isinstance(self.criterion['t2'], CCCLoss):
             #     y_t2 = (y>=2).float()
@@ -306,16 +348,17 @@ class MTLTrainer(Trainer):
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         metrics_1, metrics_2 = {}, {}
         if 't1' in self.tasks:
-            y_t1 = (y>=2).int()
-            y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
-            pred_t1 = torch.argmax(pred_t1, dim=1)
-            metrics_1 = self.compute_metrics(pred_t1, y_t1)
+            # y_t1 = (y>=2).int()
+            # y_t1 = (torch.sum(y[:, :self.num_classes-1], dim=1)>0).int()
+            # pred_t1 = torch.argmax(pred_t1, dim=1)
+            
+            pred_t1 = (torch.sigmoid(pred_t1)>=0.5).int()
+            metrics_1 = self.compute_metrics(pred_t1, y[:,0])
             self.test_preds.append(pred_t1.cpu().numpy())
-            self.test_labels.append(y_t1.cpu().numpy())
+            self.test_labels.append(y[:,0].cpu().numpy())
 
         if 't2' in self.tasks:
             # y_t2 = (y>=2).int()
-            pred_t2 = (torch.sigmoid(pred_t2)>=0.5).int()
             metrics_2 = self.compute_metrics(pred_t2, y)
             self.test_preds.append(pred_t2.cpu().numpy())
             self.test_labels.append(y.cpu().numpy())
@@ -346,11 +389,15 @@ class MTLTrainer(Trainer):
     def after_test(self):
         preds = np.concatenate(self.test_preds, axis=0)
         labels = np.concatenate(self.test_labels, axis=0)
-        for i in range(self.num_classes):
-            cm = confusion_matrix(labels[:,i], preds[:,i])
-            disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
-            # log the confusion matrix
-            self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
+        cm = confusion_matrix(labels, preds)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
+        # log the confusion matrix
+        self.logger.add_figure(f'confusion_matrix', disp.figure_)
+        # for i in range(self.num_classes):
+        #     cm = confusion_matrix(labels[:,i], preds[:,i])
+        #     disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot()
+        #     # log the confusion matrix
+        #     self.logger.add_figure(f'confusion_matrix_{i}', disp.figure_)
 
 class SedTrainer2(Trainer):
 
@@ -571,69 +618,184 @@ class Wave2vecTrainer(Trainer):
     def test(self):
         self.hug_trainer.evaluate()
         
-class VivitTrainer():
-    def __init__(self, cfg, logger=None, metrics=None):
-        dataset = VivitVideoData(cfg.data.label_path, cfg.data.annotator, cfg.data.root
-                                 ,aggregate=cfg.data.aggregate, label_category=cfg.data.annotation,
-                                 clip_len=cfg.model.vivit.num_frames,num_proc=cfg.solver.num_workers)
-        self.dataset = dataset.prepare_dataset()
-        testset = VivitVideoData(cfg.data.label_path, "Gold", cfg.data.root
-                                 ,aggregate=cfg.data.aggregate, label_category=cfg.data.annotation,
-                                 clip_len=cfg.model.vivit.num_frames,num_proc=cfg.solver.num_workers, split='test')
-        self.testset = testset.prepare_dataset()
-        labels = self.dataset.features['labels'].names
-        config = VivitConfig.from_pretrained("google/vivit-b-16x2-kinetics400")
-        config.num_classes=len(labels)
-        config.id2label = {str(i): c for i, c in enumerate(labels)}
-        config.label2id = {c: str(i) for i, c in enumerate(labels)}
-        config.num_frames=cfg.model.vivit.num_frames
-        config.video_size=cfg.model.vivit.video_size
-        self.model = VivitForVideoClassification.from_pretrained(
-                    "google/vivit-b-16x2-kinetics400",
-                    ignore_mismatched_sizes=True,
-                    config=config,cache_dir=cfg.cache_dir).to(cfg.solver.device)
-        self.training_args = TrainingArguments(
-            output_dir=f"{cfg.output.save_dir}/{cfg.data.split_strategy}_{cfg.data.annotator}_{cfg.data.annotation}",         
-            num_train_epochs=cfg.solver.epochs,             
-            per_device_train_batch_size=cfg.solver.batch_size, 
-            gradient_accumulation_steps=2,  
-            per_device_eval_batch_size=10,    
-            learning_rate=5e-05,            
-            weight_decay=0.01,              
-            logging_dir=cfg.output.log_dir,           
-            logging_steps=cfg.solver.log_steps,                
-            seed=42,                       
-            evaluation_strategy="epoch",    
-            warmup_steps=int(0.1 * 20),      
-            optim="adamw_torch",          
-            lr_scheduler_type="linear",      
-            fp16=True,    
-            metric_for_best_model="f1",
-            load_best_model_at_end=True,
-            report_to='wandb',
-            run_name=f"{cfg.data.split_strategy}_{cfg.data.annotator}"
-            # auto_find_batch_size = True                   
-        )
-        self.optimizer = AdamW(self.model.parameters(), lr=5e-05, betas=(0.9, 0.999), eps=1e-08)
-        self.trainer = HuggingFaceTrainer(
-            model=self.model,                      
-            args=self.training_args, 
-            train_dataset=self.dataset,      
-            eval_dataset=self.testset,       
-            optimizers=(self.optimizer, None),
-            compute_metrics=metric_bank['video_metrics']
-        )
-        self.cfg = cfg
-        
-    def train(self):
-        self.trainer.train()
-        self.trainer.save_model(f"{self.cfg.output.save_dir}/{self.cfg.data.split_strategy}_{self.cfg.data.annotator}_{self.cfg.data.annotation}/best/")
-        self.trainer.save_state()
-        self.trainer.evaluate(self.testset)
     
-    def test(self):
-        # testset = VivitVideoData(self.cfg.data.label_path, "Gold", self.cfg.data.root
-        #                          ,aggregate=self.cfg.data.aggregate, label_category=self.cfg.data.annotation,
-        #                          num_proc=self.cfg.solver.num_workers)
-        # testset = testset.prepare_dataset()
-        self.trainer.evaluate(self.testset)
+VIDEO_STUTTER_CLASSES = ['V', 'FG', 'HM']
+class VivitForStutterTrainer(Trainer):
+    
+    def get_model(self):
+        model = VivitForStutterClassification(self.cfg)
+        optim = torch.optim.SGD(model.parameters(), lr=self.cfg.solver.lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=10, eta_min=5e-6)
+        
+        return model, optim, scheduler, None
+    
+    def get_dataloaders(self):
+        # TODO: Fix this function
+        df = load_from_disk("outputs/fluencybank/dataset/stutter_hf/ds_5_multimodal_train").remove_columns(['input_values', 'attention_mask'])
+        df = df.train_test_split(test_size=0.1, seed=42, shuffle=True)
+        dataset = df['train']
+        val_dataset = df['test']
+        test_dataset =load_from_disk("outputs/fluencybank/dataset/stutter_hf/ds_5_multimodal_test").remove_columns(['input_values', 'attention_mask'])
+        dataset.set_format(type='torch', columns=[ 'pixel_values','labels'])
+        val_dataset.set_format(type='torch', columns=[ 'pixel_values','labels'])
+        test_dataset.set_format(type='torch', columns=[ 'pixel_values', 'labels'])
+             
+        train_loder = DataLoader(dataset, batch_size=self.cfg.solver.batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False)
+
+        return train_loder, val_loader, test_loader
+    
+    def compute_t1_metrics(self, y_pred, y_true):
+        accuracy  = acc.compute(predictions=np.argmax(y_pred, axis=1), references=y_true)['accuracy']
+        f1_score = f1.compute(predictions=np.argmax(y_pred, axis=1), references=y_true)['f1']
+        return {"accuracy": accuracy, "f1_t1": f1_score}
+
+    def compute_t2_metrics(self, y_pred, y_true):
+        y_pred = (y_pred.sigmoid() > 0.5)
+        f1_weighted = f1_score(y_true, y_pred, average='weighted')
+        f1_macro = f1_score(y_true, y_pred, average='macro')
+        f1_any = f1_score((torch.sum(y_true,dim=1)>0).float(), (torch.sum(y_pred,dim=1)>0).float(), average='macro')
+        metrics = {}
+        for i,classes in enumerate(VIDEO_STUTTER_CLASSES):
+            metrics[classes] = f1_score(y_true[:,i], y_pred[:,i])
+        return {'accuracy': (y_pred==y_true.bool()).float().mean().item(), 
+                'f1_weighted': f1_weighted, 'f1_macro': f1_macro, 'f1_any':f1_any, **metrics}
+    
+    def parse_batch_train(self, batch):
+        image = batch['pixel_values'].to(self.device)
+        if self.cfg.tasks[0] == 't1':
+            y = torch.max(batch['labels'][:,5:], dim=-1)[0].to(self.device)
+        else:
+            y = batch['labels'][:,5:].to(self.device)
+        return image, y
+    
+    def train_step(self, batch):
+        image, y = self.parse_batch_train(batch)
+        loss, logits = self.model(pixel_values=image, labels=y)
+        loss.backward()
+        self.optimizer.step()
+        return {
+                'loss': loss.item()
+        }
+    
+    def val_step(self, batch):
+        image, y = self.parse_batch_train(batch)
+        loss, logits = self.model(pixel_values=image, labels=y)
+        if self.cfg.tasks[0] == 't1':
+            metrics = self.compute_t1_metrics(logits.cpu(), y.cpu())
+            metrics['loss'] = loss.item()
+        else:
+            metrics = self.compute_t2_metrics(logits.cpu(), y.cpu())
+            metrics['loss'] = loss.item()
+        return metrics
+
+    def test_step(self, batch):
+        image, y = self.parse_batch_train(batch)
+        
+        loss, logits = self.model(pixel_values=image, labels=y)
+        # if self.cfg.tasks[0] == 't1':
+        #     metrics = self.compute_t1_metrics(logits.cpu(), y.cpu())
+        #     metrics['loss'] = loss.item()
+        # else:
+        #     metrics = self.compute_t2_metrics(logits.cpu(), y.cpu())
+        #     metrics['loss'] = loss.item()
+        # print(*metrics)
+        return loss, logits, y
+    
+    def _init_meters(self):
+        self.val_meters['accuracy'] = AverageMeter('val_accuracy', writer=self.logger)
+        self.val_meters['loss'] = AverageMeter('val_loss', writer=self.logger)
+        if self.cfg.tasks[0] == 't1':
+            self.val_meters['f1_t1'] = AverageMeter('val_f1_t1', writer=self.logger)
+        else:
+            self.val_meters['f1_weighted'] = AverageMeter('val_f1_weighted', writer=self.logger)
+            self.val_meters['f1_macro'] = AverageMeter('val_f1_macro', writer=self.logger)
+            self.val_meters['f1_any'] = AverageMeter('val_f1_any', writer=self.logger)
+            self.val_meters['lr'] = AverageMeter('lr', writer=self.logger)
+            
+        
+            for classes in VIDEO_STUTTER_CLASSES:
+                self.val_meters[classes] = AverageMeter(f'val_{classes}_f1', writer=self.logger)
+            
+        self.train_meters['loss'] = AverageMeter('train_loss', writer=self.logger)
+
+        self.test_meters['accuracy'] = AverageMeter('test_accuracy', writer=self.logger)
+        self.test_meters['loss'] = AverageMeter('test_loss', writer=self.logger)
+        if self.cfg.tasks[0] == 't1':
+            self.test_meters['f1_t1'] = AverageMeter('test_f1_t1', writer=self.logger)
+        else:
+            self.test_meters['f1_weighted'] = AverageMeter('test_f1_weighted', writer=self.logger)
+            self.test_meters['f1_macro'] = AverageMeter('test_f1_macro', writer=self.logger)
+            self.test_meters['f1_any'] = AverageMeter('test_f1_any', writer=self.logger)
+            for classes in VIDEO_STUTTER_CLASSES:
+                self.test_meters[classes] = AverageMeter(f'test_{classes}_f1', writer=self.logger)
+
+    def validate(self):
+        self.stage = 'val'
+        self.model.eval()
+        self._reset_meters(self.val_meters)
+
+        with torch.no_grad():
+            total_loss = 0
+            for batch in self.val_loader:
+                losses = self.val_step(batch)
+                total_loss += losses['loss']
+                for key, loss in losses.items():
+                    self._update_meter(self.val_meters, f'{key}', loss)
+
+            # log the learning rate
+            self.val_meters['lr'].update(self.scheduler.get_last_lr()[0])
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(total_loss/len(self.val_loader))
+            else:
+                self.scheduler.step()
+
+            self._write_meters(self.val_meters)
+            total_loss /= len(self.val_loader)
+            if total_loss < self.best_val_loss:
+                self.best_val_loss = total_loss
+                self.best_epoch = self.epoch
+                self.save_model('best_checkpoint.pt')
+                self.patience = self.cfg.solver.es_patience
+                print(f"Saving best model at epoch {self.epoch} with loss {self.best_val_loss}")
+                
+            else:
+                self.patience -= 1
+                if self.patience == 0:
+                    print(f"Early Stopping at epoch {self.epoch} \nbest epoch at {self.best_epoch} with loss {self.best_val_loss}")
+                    return True
+        
+        # self.after_validation()
+        self.model.train()
+        return False
+    def test(self, loader=None, name='test'):
+        loader = loader or self.test_loader
+        self.stage = 'test'
+        # self.load_model()
+        self.model.eval()
+        self._reset_meters(self.test_meters)
+        self.preds = []
+        self.labels = []    
+        with torch.no_grad():
+            for batch in tqdm(loader, desc='Evaluating Test Set', total=len(loader)):
+                loss, logits, labels = self.test_step(batch)
+                self.preds.append(logits)
+                self.labels.append(labels)
+        logits = torch.cat(self.preds, axis=0)
+        del self.preds
+        y = torch.cat(self.labels, axis=0)              
+        del self.labels 
+        if self.cfg.tasks[0] == 't1':
+            metrics = self.compute_t1_metrics(logits.cpu(), y.cpu())
+            metrics['loss'] = loss.item()
+        else:
+            metrics = self.compute_t2_metrics(logits.cpu(), y.cpu())
+            metrics['loss'] = loss.item()
+        breakpoint()
+        for key_metric, val in metrics.items():
+            print(key_metric, val)
+            self._update_meter(self.test_meters, f'{key_metric}', val)
+            
+        self._write_meters(self.test_meters)
+        self.after_test()

@@ -1,0 +1,5 @@
+data: 
+  name: 'fluencybankvivit'
+  root: 'datasets/fluencybank/ds_25/reading/clips/audio'
+  label_path: datasets/fluencybank/ds_30/reading/sed_labels.pt
+  encoder_name: 'vivit'

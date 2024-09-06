@@ -10,7 +10,7 @@ available_models = {
     'convlstm': ConvLSTM,
     'lstmext': LSTMExt,
     'whisperyoho': WhisperDetector,
-    'sednet': SedNet
+    'sednet': SedNet,
 }
 class NoneScheduler:
     def __init__(self, lr):
