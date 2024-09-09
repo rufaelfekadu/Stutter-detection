@@ -1,6 +1,7 @@
 import av
 import os
 import torch
+import random
 import librosa
 import numpy as np
 import pandas as pd
@@ -228,7 +229,8 @@ def custom_aggregation(group):
         'ISR': 'max',
         'MUR': 'max',
         'P': 'max',
-        'B': 'max'
+        'B': 'max',
+        "T": "max"
     }
     group = group.agg(aggregations)
     group['events_count'] = row_count    
@@ -248,7 +250,10 @@ def make_video_dataframe(manifest_file, annotator, root:str = None, aggregate:bo
     df = pd.read_csv(manifest_file)
     df = df[df['split'] == split]
     df.fillna(0, inplace=True)
-    df['file_name'] = df['media_file'] + "/" + df['media_file'] + "_" +df ['clip_id'].astype(str) + extension
+    if 'clip_id' in df.columns:
+        df['file_name'] = df['media_file'] + "/" + df['media_file'] + "_" +df ['clip_id'].astype(str) + extension
+    else:
+         df['file_name'] = df['media_file'] + "/" + df['file_name'] + extension
     full_data = df[['file_name']].drop_duplicates()
     print(f"Total {split} samples: {len(df)}")
     if annotator is not None:
@@ -267,7 +272,8 @@ def make_video_dataframe(manifest_file, annotator, root:str = None, aggregate:bo
                                         'ISR': most_common,
                                         'MUR': most_common,
                                         'P': most_common,
-                                        'B': most_common}).reset_index()
+                                        'B': most_common,
+                                        'T': "max"}).reset_index()
     df = pd.merge(full_data, df, on='file_name', how='left').fillna(0)
     df['stutter_event'] = df[STUTTER_CLASSES].apply(lambda x: (x > 0).any(), axis=1)
     df['primary_event'] = df[PRIMARY_EVENT].apply(lambda x: (x > 0).any(), axis=1)
@@ -279,7 +285,7 @@ def make_video_dataframe(manifest_file, annotator, root:str = None, aggregate:bo
     df['primary_category'] = df[PRIMARY_EVENT].values.tolist()
     df['stutter_category'] = df[STUTTER_CLASSES].values.tolist()
     print(f"Total samples after aggregation: {len(df)}")
-    print(f"{df.describe()}")
+    # print(f"{df.describe()}")
     return df
 
 def sample_frame_indices(clip_len, frame_sample_rate, seg_len):
@@ -292,9 +298,15 @@ def sample_frame_indices(clip_len, frame_sample_rate, seg_len):
     Returns:
         indices (`List[int]`): List of sampled frame indices
     '''
-    converted_len = int(clip_len * frame_sample_rate)
-    end_idx = rng.integers(converted_len, seg_len)
-    start_idx = end_idx - converted_len
+    converted_len = int(clip_len * 1)
+    if clip_len >= seg_len:
+        # print(f"Segment length {seg_len} is greater than sample length")
+        # converted_len = int(seg_len * 1)
+        start_idx = 0
+        end_idx = seg_len
+    else:
+        end_idx = rng.integers(converted_len, seg_len)
+        start_idx = end_idx - converted_len
     indices = np.linspace(start_idx, end_idx, num=clip_len)
     indices = np.clip(indices, start_idx, end_idx - 1).astype(np.int64)
     return indices
@@ -312,12 +324,20 @@ def read_video_pyav(container, indices):
     container.seek(0)
     start_index = indices[0]
     end_index = indices[-1]
+    # assert len(indices) == 10, f"Expected 10 frames, got {len(indices)}"
+    # for i in indices:
+    #     reformatted_frame = container.decode(video=0)[i].reformat(width=224,height=224)
+    #     frames.append(reformatted_frame)
     for i, frame in enumerate(container.decode(video=0)):
         if i > end_index:
             break
         if i >= start_index and i in indices:
             reformatted_frame = frame.reformat(width=224,height=224)
             frames.append(reformatted_frame)
+    
+    if len(frames) < 10:
+        frames = random.choices(frames, k=10)
+            
     new=np.stack([x.to_ndarray(format="rgb24") for x in frames])
 
     return new
@@ -330,6 +350,7 @@ def prepare_hf_dataset_video(example,processor,extractor, label_type:str = "seco
     inputs = processor(list(torch.tensor(video)), return_tensors='pt', do_resize=True)
     inputs['pixel_values'] = torch.tensor(inputs['pixel_values']).squeeze()
     inputs['labels'] = example[label_type]
+    inputs['tension'] = example['T']
     del video,indices,container
     audio, sr = sf.read(example['file_name'].replace(".mp4", ".wav").replace("video", "audio"))
     audio_features = extractor(audio, sampling_rate=sr ,return_tensors='pt')

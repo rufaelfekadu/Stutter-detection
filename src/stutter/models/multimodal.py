@@ -1,17 +1,19 @@
-from transformers import Wav2Vec2ForSequenceClassification, VivitForVideoClassification
-from transformers import Wav2Vec2Config, VivitConfig
+from transformers import Wav2Vec2ForSequenceClassification, VivitForVideoClassification, VivitConfig
 import torch
 import torch.nn as nn
-from torch.nn import CrossEntropyLoss, MSELoss
+
+from typing import Optional
 
 
-
+CACHE_DIR="/tmp/"
 _HIDDEN_STATES_START_POSITION = 2
 
 class AudioExtractor(Wav2Vec2ForSequenceClassification):
   def __init__(self, config):
     super().__init__(config)
     self.freeze_base_model()
+    self.wav2vec2.feature_extractor.requires_grad_(True)
+    self.projector.requires_grad_(True)
   def forward(
       self,
       input_values,
@@ -83,15 +85,22 @@ class MultiModalClassification(nn.Module):
       self.num_labels = num_labels
       self.audio_extractor  = AudioExtractor.from_pretrained("superb/wav2vec2-base-superb-ks",config=wav2vec2_config, cache_dir=CACHE_DIR)
       self.video_extractor = VideoExtractor.from_pretrained("google/vivit-b-16x2-kinetics400", config=vivit_config, ignore_mismatched_sizes=True, cache_dir=CACHE_DIR)
-      self.activation = nn.Tanh()
-      self.projector = nn.Linear(1024, 4096)
-      self.classifier = nn.Linear(4096, self.num_labels)
+      self.activation = nn.GELU()
+      self.projector = nn.Linear(1024, 1024)
+      self.classifier = nn.Linear(1024, self.num_labels)
+      self.audio_layer_norm = nn.LayerNorm(256)
+      self.video_layer_norm = nn.LayerNorm(768)
+      self.multi_norm = nn.BatchNorm1d(1024)
+
       
     def forward(self, pixel_values, input_values, attention_mask, labels):
       audio = self.audio_extractor(input_values,attention_mask)
+      audio = self.audio_layer_norm(audio)
       video = self.video_extractor(pixel_values)
+      video = self.video_layer_norm(video)
       x = torch.cat((video, audio), dim=1)
       output = self.projector(x)
+      output = self.multi_norm(output)
       logits = self.classifier(self.activation(output))
       
       # loss = None
@@ -106,3 +115,4 @@ class MultiModalClassification(nn.Module):
                           labels.float().view(-1, self.num_labels))
         
       return (loss, logits)
+    

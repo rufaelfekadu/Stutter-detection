@@ -1,5 +1,7 @@
 
 setting: 'multimodal'
+
+tasks: ['t2']
 # model
 model:
   name: 'multimodal'
@@ -18,3 +20,12 @@ solver:
   min_lr: 3e-5
   log_steps: 30
   eval_steps: 60
+
+data:
+  name: 'bau'
+  annotation: "V"
+  aggregate: True
+  annotator: "bau"
+  split_strategy: "labels"
+  label_path: "outputs/fluencybank/dataset/stutter_hf/label_split/bau_multimodal_"
+  root: "datasets/fluencybank/ds_label/reading/A3/clips/video/"

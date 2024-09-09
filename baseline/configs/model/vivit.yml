@@ -1,35 +1,35 @@
 setting: 'vivit'
 
-tasks: ['t2']
+tasks: ['t1']
 
 model:
   name: 'vivit'
-  output_size: 3
+  output_size: 1
   vivit:
     num_frames: 10
     video_size: [10, 224, 224]
 
 solver:
   num_workers: 1
-  batch_size: 40
-  epochs: 25
+  batch_size: 20
+  epochs: 5
   lr: 5e-4
   es_patience: 30
   device: 'cuda'
   optimizer: 'sgd'
   scheduler: 'cosine'
   factor: 0.5
-  min_lr: 1e-5
+  min_lr: 4e-5
   log_steps: 30
   eval_steps: 60
 
 
 data:
-  name: 'fluencybank'
-  annotation: "secondary_event"
+  name: 'bau'
+  annotation: "HM"
   aggregate: True
-  annotator: "A1"
-  split_strategy: "ds_5"
-  label_path: "datasets/fluencybank/ds_5/reading/total_df.csv"
-  root: "datasets/fluencybank/ds_5/reading/clips/video/"
+  annotator: "bau"
+  split_strategy: "labels"
+  label_path: "outputs/fluencybank/dataset/stutter_hf/label_split/bau_multimodal_"
+  root: "datasets/fluencybank/ds_label/reading/A3/clips/video/"
 

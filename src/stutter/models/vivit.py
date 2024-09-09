@@ -19,9 +19,9 @@ class VivitForStutterClassification(nn.Module):
         self.vivit.vivit.encoder.layer[11].requires_grad_(True)
         self.vivit.classifier.requires_grad_(True)
         self.activation = nn.GELU()
-        self.fc1 = torch.nn.Linear(400, 1024)
+        self.fc1 = torch.nn.Linear(400, 400)
         self.num_labels = cfg.model.output_size
-        self.y = torch.nn.Linear(1024, cfg.model.output_size)
+        self.y = torch.nn.Linear(400, cfg.model.output_size)
         self.pos_weight = torch.tensor([1354/180, 924/610 , 1346/188])
         self.cfg = cfg
         
@@ -32,8 +32,9 @@ class VivitForStutterClassification(nn.Module):
         logits = self.y(self.activation(logits))
         loss = None
         if labels is not None and self.cfg.tasks[0] == "t1":
-            loss_ce = torch.nn.CrossEntropyLoss()
-            loss = loss_ce(logits.view(-1, self.num_labels), labels.view(-1))
+            logits = torch.sigmoid(logits).view(-1)
+            loss_ce = torch.nn.BCELoss()
+            loss = loss_ce(logits, labels)
             
         elif labels is not None:
             loss_bce = torch.nn.BCEWithLogitsLoss(pos_weight=self.pos_weight.to(labels.device))
