@@ -5,6 +5,7 @@ tasks: ['t2']
 # model
 model:
   name: 'multimodal'
+  output_size: 8
   
 
 solver:

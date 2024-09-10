@@ -335,13 +335,28 @@ def read_video_pyav(container, indices):
             reformatted_frame = frame.reformat(width=224,height=224)
             frames.append(reformatted_frame)
     
-    if len(frames) < 10:
-        frames = random.choices(frames, k=10)
-            
+    if len(frames) != 10:
+        # print(f"Expected 10 frames, got {len(frames)}, Repeating frames...")
+        for i in range(10 - len(frames)):
+            frames.append(frames[-1])
+        # frames.extend(frames[-1]*(10-len(frames)))
+        # frames = random.choices(frames,k=10)
+    
+    assert len(frames) == 10, f"Expected 10 frames, got {len(frames)}"
     new=np.stack([x.to_ndarray(format="rgb24") for x in frames])
 
     return new
 
+def repeat_consecutively(lst, target_size):
+    repeated_list = []
+    repeat_count = target_size // len(lst)  # Calculate how many times to repeat each element
+    
+    for item in lst:
+        repeated_list.extend([item] * repeat_count)
+        if len(repeated_list) == target_size:
+            break
+    
+    return repeated_list
 
 def prepare_hf_dataset_video(example,processor,extractor, label_type:str = "secondary_event", clip_len=10):
     container = av.open(example['file_name'])

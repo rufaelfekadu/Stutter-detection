@@ -640,9 +640,15 @@ class VivitForStutterTrainer(Trainer):
         label = 'labels'
         
         if self.cfg.tasks[0] == 't1':
-            ann_index = STUTTER_CLASSES.index(self.cfg.data.annotation)
-            print(f"Label is {self.cfg.data.annotation} at index {ann_index}")
-            df = df.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+            if self.cfg.data.annotation != 'any':
+                ann_index = STUTTER_CLASSES.index(self.cfg.data.annotation)
+                print(f"Label is {self.cfg.data.annotation} at index {ann_index}")
+                df = df.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+                df = df.filter(lambda example: len(example['pixel_values']) == 10, num_proc=8, writer_batch_size=100)
+                test_dataset = test_dataset.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+            else:
+                df = df.map(lambda x: {'labels': max(x['labels'][5:])}, num_proc=8)
+                test_dataset = test_dataset.map(lambda x: {'labels': max(x['labels'][5:])}, num_proc=8)   
             class_counts = df['labels'].count(0), df['labels'].count(1)
             print(f"Class counts are {class_counts}")
             minority_class = 0 if class_counts[0] < class_counts[1] else 1
@@ -662,7 +668,6 @@ class VivitForStutterTrainer(Trainer):
             class_counts = undersampled_dataset['labels'].count(0), undersampled_dataset['labels'].count(1)
             print(f"Undersampled Class counts are {class_counts}")
             df = undersampled_dataset.train_test_split(test_size=0.1, seed=42, shuffle=True)
-            test_dataset = test_dataset.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
             
         else:
             df = df.train_test_split(test_size=0.1, seed=42, shuffle=True)

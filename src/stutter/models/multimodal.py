@@ -103,12 +103,15 @@ class MultiModalClassification(nn.Module):
       output = self.multi_norm(output)
       logits = self.classifier(self.activation(output))
       
-      # loss = None
+      loss = None
       # if labels is not None:
       #   loss_fct = CrossEntropyLoss()
       #   loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-      loss = None
-      if labels is not None:
+      if labels is not None and self.num_labels == 1:
+          logits = torch.sigmoid(logits).view(-1)
+          loss_ce = torch.nn.BCELoss()
+          loss = loss_ce(logits, labels)
+      else:
           pos_weight = torch.tensor([1349/185, 1384/150, 1481/53, 1225/309, 1134/500,1354/180, 924/610 , 1346/188]).to(labels.device)
           loss_fct = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
           loss = loss_fct(logits.view(-1, self.num_labels), 

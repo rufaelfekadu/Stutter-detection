@@ -25,10 +25,9 @@ def main(cfg):
     metrics = ['f1_macro']
 
     trainer = build_trainer(cfg, logger, metrics)
-    
-    # trainer.train()
-    # print("Loading model...")
     trainer.load_model()
+    
+    trainer.train()
     # trainer.train()
     trainer.test()
 

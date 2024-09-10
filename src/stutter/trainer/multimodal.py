@@ -56,7 +56,7 @@ class MultiModalTrainer(Trainer):
         vivitconfig.num_frames=10
         vivitconfig.video_size=[10,224,224]
 
-        model = MultiModalClassification(8, wavconfig, vivitconfig)
+        model = MultiModalClassification(self.cfg.model.output_size, wavconfig, vivitconfig)
         optim = torch.optim.SGD(model.parameters(), lr=self.cfg.solver.lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=10, eta_min=5e-6)
 
@@ -70,9 +70,14 @@ class MultiModalTrainer(Trainer):
         test_dataset = load_from_disk("outputs/fluencybank/dataset/stutter_hf/label_split/Gold_multimodal_test")
         
         if self.cfg.tasks[0] == 't1':
-            ann_index = STUTTER_CLASSES.index(self.cfg.data.annotation)
-            print(f"Label is {self.cfg.data.annotation} at index {ann_index}")
-            df = df.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+            if self.cfg.data.annotation != 'any':
+                ann_index = STUTTER_CLASSES.index(self.cfg.data.annotation)
+                print(f"Label is {self.cfg.data.annotation} at index {ann_index}")
+                df = df.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+                test_dataset = test_dataset.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+            else:
+                df = df.map(lambda x: {'labels': max(x['labels'])}, num_proc=8)
+                test_dataset = test_dataset.map(lambda x: {'labels': max(x['labels'])}, num_proc=8)   
             class_counts = df['labels'].count(0), df['labels'].count(1)
             print(f"Class counts are {class_counts}")
             minority_class = 0 if class_counts[0] < class_counts[1] else 1
@@ -88,11 +93,10 @@ class MultiModalTrainer(Trainer):
             undersampled_dataset = concatenate_datasets([minority_class_samples, majority_class_samples])
             del minority_class_samples, majority_class_samples
             # Shuffle the final undersampled dataset
-            undersampled_dataset = undersampled_dataset.shuffle(seed=42)
+            df = undersampled_dataset.shuffle(seed=42)
             class_counts = undersampled_dataset['labels'].count(0), undersampled_dataset['labels'].count(1)
             print(f"Undersampled Class counts are {class_counts}")
-            df = undersampled_dataset.train_test_split(test_size=0.1, seed=42, shuffle=True)
-            test_dataset = test_dataset.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+            # df = undersampled_dataset.train_test_split(test_size=0.1, seed=42, shuffle=True)
             
         
         df = df.train_test_split(test_size=0.1, seed=42, shuffle=True)
@@ -140,7 +144,10 @@ class MultiModalTrainer(Trainer):
         image = batch['pixel_values'].to(self.device)
         audio = batch['input_values'].squeeze(1).to(self.device)
         attention_mask = batch['attention_mask'].squeeze(1).to(self.device)
-        y = batch['labels'].to(self.device)
+        if self.cfg.tasks[0] == 't1':
+            y = batch['labels'].to(self.device).float()
+        else:
+            y = batch['labels'].to(self.device)
         return image, audio, attention_mask, y
     
     def train_step(self, batch):
