@@ -6,6 +6,7 @@ tasks: ['t1']
 model:
   name: 'multimodal'
   output_size: 1
+  cache_dir: '/tmp/'
   
 
 solver:

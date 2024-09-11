@@ -5,7 +5,7 @@ import torch.nn as nn
 from typing import Optional
 
 
-CACHE_DIR="outputs/"
+CACHE_DIR="/tmp/"
 _HIDDEN_STATES_START_POSITION = 2
 
 
@@ -235,6 +235,7 @@ class VideoExtractor(VivitForVideoClassification):
         )
 
         sequence_output = outputs[0][:, 0, :]
+        sequence_output = self.emb(sequence_output)
         return sequence_output
 
 class MultiModalClassification(nn.Module):
@@ -257,8 +258,8 @@ class MultiModalClassification(nn.Module):
       
 
       
-    def forward(self, pixel_values, input_values, attention_mask, labels):
-        audio = self.audio_extractor(input_values,attention_mask)
+    def forward(self, pixel_values, input_values, labels):
+        audio = self.audio_extractor(input_values)
         audio = self.audio_layer_norm(audio)
         video = self.video_extractor(pixel_values)
         video = self.video_layer_norm(video)
@@ -271,15 +272,15 @@ class MultiModalClassification(nn.Module):
         # if labels is not None:
         #   loss_fct = CrossEntropyLoss()
         #   loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-        if labels is not None and self.out_putsize == 1:
+        if labels is not None and self.output_size == 1:
             logits = torch.sigmoid(logits).view(-1)
             loss_ce = torch.nn.BCELoss()
             loss = loss_ce(logits, labels)
         else:
             pos_weight = torch.tensor([1349/185, 1384/150, 1481/53, 1225/309, 1134/500,1354/180, 924/610 , 1346/188]).to(labels.device)
             loss_fct = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-            loss = loss_fct(logits.view(-1, self.out_putsize), 
-                            labels.float().view(-1, self.out_putsize))
+            loss = loss_fct(logits.view(-1, self.output_size), 
+                            labels.float().view(-1, self.output_size))
 
         return (loss, logits)
         
@@ -287,14 +288,14 @@ class MultiModalClassification(nn.Module):
 if __name__ == "__main__":
 
     kwargs = {
-        'output_size': 6,
+        'output_size': 8,
         'vid_num_frames': 10,
         'vid_size': [10, 224, 224]
     }
     model = MultiModalClassification(**kwargs)
     print(model)
-    audio_input = torch.randn(32, 301, 40)
+    audio_input = torch.randn(32, 1500, 40)
     video_input = torch.randn(32, 10, 3, 224, 224)
-    labels = torch.randint(0, 2, (32, 6))
-    loss, logits = model(video_input, audio_input, None, labels)
+    labels = torch.randint(0, 2, (32, 8))
+    loss, logits = model(video_input, audio_input, labels)
 

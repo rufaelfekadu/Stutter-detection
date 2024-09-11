@@ -63,6 +63,7 @@ _C.model.encoder_name = 'whisper-l'
 _C.model.vivit = CN()
 _C.model.vivit.num_frames = 10
 _C.model.vivit.video_size = [10, 224, 224]
+_C.model.vivit.output_size = 1
 
 
 

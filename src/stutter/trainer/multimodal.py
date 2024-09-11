@@ -2,8 +2,6 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from .trainer import Trainer
 from stutter.models.multimodal import MultiModalClassification
-from stutter.utils.meters import AverageMeter
-from transformers import TrainingArguments, Wav2Vec2Config, VivitConfig
 from datasets import load_from_disk, Dataset, concatenate_datasets, load_metric, load_dataset
 import torch
 import torch.nn.functional as F
@@ -31,7 +29,7 @@ class MultiModalTrainer(Trainer):
         # vivitconfig = VivitConfig.from_pretrained("google/vivit-b-16x2-kinetics400")
         
 
-        model = MultiModalClassification(self.cfg.model.output_size)
+        model = MultiModalClassification(**self.cfg.model.vivit)
         optim = torch.optim.SGD(model.parameters(), lr=self.cfg.solver.lr)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=10, eta_min=5e-6)
 
@@ -43,18 +41,18 @@ class MultiModalTrainer(Trainer):
         # test_dataset = load_from_disk("outputs/fluencybank/dataset/stutter_hf/label_split/Gold_multimodal_test")
         # df = load_dataset(f'herwoww/{self.cfg.data.annotator}_multimodal_train')
         # test_dataset = load_dataset(f'herwoww/Gold_multimodal_train')
-        df = load_dataset(f"herwoww/{self.cfg.data.annotator}_multimodal_train", cache_dir="/tmp/").remove_columns(['input_values', 'attention_mask'])['train']
-        test_dataset=load_dataset("herwoww/Gold_multimodal_train", cache_dir="/tmp/").remove_columns(['input_values', 'attention_mask'])['train']
+        df = load_dataset(f"herwoww/{self.cfg.data.annotator}_multimodal_train", cache_dir="/tmp/")['train']
+        test_dataset=load_dataset("herwoww/Gold_multimodal_test", cache_dir="/tmp/")['train']
         
         if self.tasks[0] == 't1':
             if self.cfg.data.annotation != 'any':
                 ann_index = STUTTER_CLASSES.index(self.cfg.data.annotation)
                 print(f"Label is {self.cfg.data.annotation} at index {ann_index}")
-                df = df.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
-                test_dataset = test_dataset.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8)
+                df = df.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8, writer_batch_size=100)
+                test_dataset = test_dataset.map(lambda x: {'labels': x['labels'][ann_index]}, num_proc=8, writer_batch_size=100)
             else:
                 df = df.map(lambda x: {'labels': max(x['labels'])}, num_proc=8)
-                test_dataset = test_dataset.map(lambda x: {'labels': max(x['labels'])}, num_proc=8)   
+                test_dataset = test_dataset.map(lambda x: {'labels': max(x['labels'])}, num_proc=8, writer_batch_size=100)   
             class_counts = df['labels'].count(0), df['labels'].count(1)
             print(f"Class counts are {class_counts}")
             minority_class = 0 if class_counts[0] < class_counts[1] else 1
@@ -79,9 +77,9 @@ class MultiModalTrainer(Trainer):
         df = df.train_test_split(test_size=0.1, seed=42, shuffle=True)
         dataset = df['train']
         val_dataset = df['test']
-        dataset.set_format(type='torch', columns=[ 'pixel_values','input_values', 'attention_mask', 'labels'])
-        val_dataset.set_format(type='torch', columns=[ 'pixel_values','input_values', 'attention_mask', 'labels'])
-        test_dataset.set_format(type='torch', columns=[ 'pixel_values','input_values', 'attention_mask', 'labels'])
+        dataset.set_format(type='torch', columns=[ 'pixel_values','mfcc', 'labels'])
+        val_dataset.set_format(type='torch', columns=[ 'pixel_values','mfcc','labels'])
+        test_dataset.set_format(type='torch', columns=[ 'pixel_values','mfcc', 'labels'])
              
         train_loder = DataLoader(dataset, batch_size=self.cfg.solver.batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True)
         val_loader = DataLoader(val_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False, collate_fn=collate_fn)
@@ -119,17 +117,17 @@ class MultiModalTrainer(Trainer):
     
     def parse_batch_train(self, batch):
         image = batch['pixel_values'].to(self.device)
-        audio = batch['input_values'].to(self.device)
-        attention_mask = batch['attention_mask'].squeeze(1).to(self.device)
+        audio = batch['mfcc'].to(self.device)
+        # attention_mask = batch['attention_mask'].squeeze(1).to(self.device)
         if self.cfg.tasks[0] == 't1':
             y = batch['labels'].to(self.device).float()
         else:
             y = batch['labels'].to(self.device)
-        return image, audio, attention_mask, y
+        return image, audio, y
     
     def train_step(self, batch):
-        image, audio, attention_mask, y = self.parse_batch_train(batch)
-        loss, logits = self.model(pixel_values=image, input_values=audio, attention_mask=attention_mask, labels=y)
+        image, audio, y = self.parse_batch_train(batch)
+        loss, logits = self.model(pixel_values=image, input_values=audio,  labels=y)
         loss.backward()
         self.optimizer.step()
         return {
@@ -138,7 +136,7 @@ class MultiModalTrainer(Trainer):
     
     def val_step(self, batch):
         image, audio, attention_mask, y = self.parse_batch_train(batch)
-        loss, logits = self.model(pixel_values=image, input_values=audio, attention_mask=attention_mask, labels=y)
+        loss, logits = self.model(pixel_values=image, input_values=audio, labels=y)
         if self.cfg.tasks[0] == 't1':
             metrics = self.compute_t1_metrics(logits, y.cpu())
             metrics['loss'] = loss.item()
@@ -149,7 +147,7 @@ class MultiModalTrainer(Trainer):
 
     def test_step(self, batch):
         image, audio, attention_mask, y = self.parse_batch_train(batch)
-        loss, logits = self.model(pixel_values=image, input_values=audio, attention_mask=attention_mask, labels=y)
+        loss, logits = self.model(pixel_values=image, input_values=audio, labels=y)
 
         if self.cfg.tasks[0] == 't1':
             metrics = self.compute_t1_metrics(logits, y.cpu())
@@ -159,7 +157,7 @@ class MultiModalTrainer(Trainer):
             metrics['loss'] = loss.item()
         
         return {
-            'loss': loss.item(),
+            # 'loss': loss.item(),
             **metrics
         }
     
