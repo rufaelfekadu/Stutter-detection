@@ -81,9 +81,9 @@ class MultiModalTrainer(Trainer):
         val_dataset.set_format(type='torch', columns=[ 'pixel_values','mfcc','labels'])
         test_dataset.set_format(type='torch', columns=[ 'pixel_values','mfcc', 'labels'])
              
-        train_loder = DataLoader(dataset, batch_size=self.cfg.solver.batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True)
-        val_loader = DataLoader(val_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False, collate_fn=collate_fn)
-        test_loader = DataLoader(test_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False, collate_fn=collate_fn)
+        train_loder = DataLoader(dataset, batch_size=self.cfg.solver.batch_size, shuffle=True, drop_last=True)
+        val_loader = DataLoader(val_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=self.cfg.solver.batch_size, shuffle=False)
 
         return train_loder, val_loader, test_loader
     
@@ -135,10 +135,10 @@ class MultiModalTrainer(Trainer):
         }
     
     def val_step(self, batch):
-        image, audio, attention_mask, y = self.parse_batch_train(batch)
+        image, audio, y = self.parse_batch_train(batch)
         loss, logits = self.model(pixel_values=image, input_values=audio, labels=y)
         if self.cfg.tasks[0] == 't1':
-            metrics = self.compute_t1_metrics(logits, y.cpu())
+            metrics = self.compute_t1_metrics(logits.detach(), y.cpu())
             metrics['loss'] = loss.item()
         else:
             metrics = self.compute_t2_metrics(logits.cpu(), y.cpu())
@@ -146,15 +146,15 @@ class MultiModalTrainer(Trainer):
         return metrics
 
     def test_step(self, batch):
-        image, audio, attention_mask, y = self.parse_batch_train(batch)
+        image, audio, y = self.parse_batch_train(batch)
         loss, logits = self.model(pixel_values=image, input_values=audio, labels=y)
 
         if self.cfg.tasks[0] == 't1':
-            metrics = self.compute_t1_metrics(logits, y.cpu())
+            metrics = self.compute_t1_metrics(logits.detach(), y.cpu())
             metrics['loss'] = loss.item()
         else:
             metrics = self.compute_t2_metrics(logits.cpu(), y.cpu())
-            metrics['loss'] = loss.item()
+            metrics['t1_loss'] = loss.item()
         
         return {
             # 'loss': loss.item(),

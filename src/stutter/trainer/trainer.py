@@ -161,7 +161,7 @@ class Trainer(BaseTrainer):
                 for key, loss in losses.items():
                     self._update_meter(self.train_meters, f'{key}', loss)
                     
-                tq_obj.set_postfix({key: round(meter.avg,2) for key, meter in self.train_meters.items()})
+                tq_obj.set_postfix({key: round(meter.avg[0].detach().numpy(),2) for key, meter in self.train_meters.items()})
 
                 self.global_step += 1
 

@@ -195,6 +195,7 @@ class AudioExtractor(nn.Module):
         
     def forward(self, x: torch.Tensor, tasks=['t1', 't2']):
         # x->(batch_size, seq_len, input_size)
+        x = x.permute(0, 2, 1)
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
 
@@ -239,15 +240,15 @@ class VideoExtractor(VivitForVideoClassification):
         return sequence_output
 
 class MultiModalClassification(nn.Module):
-    __acceptable_params__ = ['output_size', 'vid_num_frames', 'vid_size']
+    __acceptable_params__ = ['output_size', 'num_frames', 'video_size']
     def __init__(self, **kwargs):
         super().__init__()
         [setattr(self, k, kwargs.get(k, None)) for k, v in kwargs.items() if k in self.__acceptable_params__]
 
         self.audio_extractor  = AudioExtractor(input_size=40, hidden_size=64, num_layers=1, output_size=128, dropout=0.5)
         vivit_config = VivitConfig.from_pretrained("google/vivit-b-16x2-kinetics400")
-        vivit_config.num_frames=self.vid_num_frames
-        vivit_config.video_size=self.vid_size
+        vivit_config.num_frames=self.num_frames
+        vivit_config.video_size=self.video_size
         self.video_extractor = VideoExtractor.from_pretrained("google/vivit-b-16x2-kinetics400", config=vivit_config, ignore_mismatched_sizes=True, cache_dir=CACHE_DIR)
         self.activation = nn.GELU()
         self.projector = nn.Linear(256, 128)

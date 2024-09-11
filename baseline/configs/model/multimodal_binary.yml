@@ -23,6 +23,9 @@ solver:
   log_steps: 30
   eval_steps: 60
 
+  validate_on: 'loss'
+  validate_mode: 'min'
+
 data:
   name: 'bau'
   annotation: "V"
