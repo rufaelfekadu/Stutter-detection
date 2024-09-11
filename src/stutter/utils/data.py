@@ -16,23 +16,28 @@ from stutter.utils.annotation import LabelMap
 
 def _load_audio_file(row, **kwargs):
 
-    frames = kwargs.get('n_frames', 3)
+    frames = kwargs.get('n_frames', 3000)
     n_mels = kwargs.get('n_mels', 40)
+    n_mfcc = kwargs.get('n_mfcc', 13)
     hop_length = kwargs.get('hop_length', 160)
     win_length = kwargs.get('win_length', 400)
     sr = kwargs.get('sr', 16000)
-    total_samples = sr*frames
-    time_dim = (total_samples + win_length) // hop_length - 1
+    # total_samples = sr*frames
+    # time_dim = (total_samples + win_length) // hop_length - 1
 
     audio_path = row['file_path']
     try:
         # waveform, sample_rate = torchaudio.load(audio_path, format='wav')
         # mel_spec = torchaudio.transforms.MelSpectrogram(win_length=win_length, hop_length=hop_length, n_mels=n_mels, sample_rate=sample_rate)(waveform)
         waveform, sample_rate = librosa.load(audio_path, sr=sr)
+        
+        if len(waveform) < frames+1:
+            waveform = np.pad(waveform, (0, frames - len(waveform)))
+
         # mel_spec = librosa.feature.melspectrogram(y=waveform, sr=sample_rate, n_mels=n_mels, hop_length=hop_length, win_length=win_length)
         # mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
         mel_spec = logmelfilterbank(waveform, sample_rate, num_mels=n_mels, hop_size=hop_length, win_length=win_length)
-        # mfcc = librosa.feature.mfcc(S=log_s, n_mfcc=n_mels)
+        # mfcc = librosa.feature.mfcc(waveform, n_mfcc=n_mfcc)
         f0, voiced_flag, voiced_probs = librosa.pyin(waveform, 
                                                      fmin=librosa.note_to_hz('C2'), 
                                                      fmax=librosa.note_to_hz('C7'), 
@@ -41,12 +46,7 @@ def _load_audio_file(row, **kwargs):
         
         f0 = np.nan_to_num(f0)  # Replace NaNs with zeros
         f0_delta = librosa.feature.delta(f0)
-        if mel_spec.shape[0] < time_dim:
-            mel_spec = np.pad(mel_spec, ((0, time_dim - mel_spec.shape[0]), (0, 0)), mode='constant')
-        if f0.shape[0] < time_dim:
-            f0 = np.pad(f0, (0, time_dim - f0.shape[0]), mode='constant')
-            f0_delta = np.pad(f0_delta, (0, time_dim - f0_delta.shape[0]), mode='constant')
-            voiced_probs = np.pad(voiced_probs, (0, time_dim - voiced_probs.shape[0]), mode='constant')
+
         return (row.name, mel_spec, np.vstack([f0, f0_delta, voiced_probs]))  
 
     except Exception as e:
@@ -220,6 +220,7 @@ SECONDARY_EVENT = ['V', 'FG', 'HM']
 def custom_aggregation(group):
     # Calculate the number of rows for the annotator in the group
     row_count = len(group)
+
     aggregations ={
         'V': 'max',
         'FG': 'max',
@@ -284,6 +285,7 @@ def make_video_dataframe(manifest_file, annotator, root:str = None, aggregate:bo
     df['secondary_category'] = df[SECONDARY_EVENT].values.tolist()
     df['primary_category'] = df[PRIMARY_EVENT].values.tolist()
     df['stutter_category'] = df[STUTTER_CLASSES].values.tolist()
+    
     print(f"Total samples after aggregation: {len(df)}")
     # print(f"{df.describe()}")
     return df

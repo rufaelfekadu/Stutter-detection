@@ -2,10 +2,64 @@ import torch
 import numpy as np
 from datasets import load_metric
 from sklearn.metrics import f1_score, roc_curve, multilabel_confusion_matrix
+import torcheval.metrics.functional as F
 
 
 acc = load_metric("accuracy")
 f1 = load_metric("f1")
+
+
+
+def accuracy(pred, label):
+    if pred.shape[1] ==1:
+        pred = torch.sigmoid(pred)
+        return F.multilabel_accuracy(pred, label, threshold=0.5)
+    else:
+        pred = torch.sigmoid(pred)
+        return F.multilabel_accuracy(pred, label, threshold=0.5, criteria='hamming')
+
+def f1_score_multilabel(pred, label):
+
+    if len(pred.shape)==1:
+        pred = torch.sigmoid(pred)
+        return F.binary_f1_score(pred, label, threshold=0.5)
+    else:
+        f1 = []
+        for i in range(pred.shape[1]):
+            pred[:, i] = torch.sigmoid(pred[:, i])
+            f1.append(F.binary_f1_score(pred[:, i], label[:, i], threshold=0.5))
+        return f1
+
+def binary_eer(pred, label):
+    pred = torch.sigmoid(pred)
+    cm = F.binary_confusion_matrix(pred, label, threshold=0.5)
+    # Extract true positives, false positives, false negatives, and true negatives
+    tp = cm[1, 1].item()
+    fp = cm[0, 1].item()
+    fn = cm[1, 0].item()
+    tn = cm[0, 0].item()
+    
+    # Calculate False Acceptance Rate (FAR) and False Rejection Rate (FRR)
+    FAR = fp / (fp + tn)
+    FRR = fn / (fn + tp)
+    
+    # Calculate EER
+    EER = (FAR + FRR) / 2
+    return EER
+
+def eer_multilabel(pred, label):
+
+    if pred.shape[1] ==1:
+        pred = torch.sigmoid(pred)
+        return binary_eer(pred, label)
+
+    else:
+        eers = []
+        for i in range(pred.shape[1]):
+            pred[:, i] = torch.sigmoid(pred[:, i])
+            eers.append(binary_eer(pred[:, i], label[:, i]))
+        return eers
+
 def compute_video_classification_metrics(p):
     accuracy  = acc.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)['accuracy']
     f1_score = f1.compute(predictions=np.argmax(p.predictions, axis=1), references=p.label_ids)['f1']
@@ -55,8 +109,6 @@ def iou_metric(y_true, y_pred):
     iou = iou.sum() / mask.sum()
 
     return iou.mean()
-
-
 
 def binary_f1(y_true, y_pred):
     threshold = 0.5
@@ -147,3 +199,10 @@ def f1_score_per_class(predictions, labels):
     labels_any = (torch.sum(labels, dim=1) >0).int()
     f1.append(f1_score(predictions_any.cpu().numpy(), labels_any.cpu().numpy()))
     return f1
+
+
+metric_registery={
+    'accuracy': accuracy,
+    'f1': f1_score_multilabel,
+    'eer': eer_multilabel,
+}

@@ -29,6 +29,8 @@ def setup_exp(cfg):
     cfg.output.log_dir = os.path.join(cfg.output.save_dir, cfg.output.log_dir)
     cfg.output.checkpoint_dir = os.path.join(cfg.output.save_dir, cfg.output.checkpoint_dir)
 
+    cfg.output.logger_name = f"{cfg.data.name}_{cfg.model.name}_{cfg.data.annotator}_"+'_'.join(cfg.tasks)
+
     if cfg.data.encoder_name != cfg.model.encoder_name:
         print(f"Warning: Encoder name in data config is different from model config. Using encoder name from model config.")
         cfg.data.enocder_name = cfg.model.encoder_name
@@ -37,7 +39,7 @@ def setup_exp(cfg):
     os.makedirs(cfg.output.save_dir, exist_ok=True)
     os.makedirs(cfg.output.log_dir, exist_ok=True)
     os.makedirs(cfg.output.checkpoint_dir, exist_ok=True)
-    os.makedirs(cfg.data.ckpt, exist_ok=True)
+    # os.makedirs(cfg.data.ckpt, exist_ok=True)
 
     # set seed
     set_seed(cfg.seed)
@@ -80,3 +82,4 @@ def plot_sample(*samples, title=None, figsize=(20, 10), save_path=None, **kwargs
     if save_path:
         plt.savefig(save_path)
     return fig, ax
+

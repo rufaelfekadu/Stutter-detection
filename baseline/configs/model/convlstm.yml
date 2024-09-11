@@ -1,16 +1,5 @@
-setting: 'mtl'
-solver:
-  num_workers: 8
-  batch_size: 128
-  epochs: 200
-  lr: 0.05
-  es_patience: 100
-  device: 'cuda'
-  scheduler: 'none'
-  factor: 0.5
-  patience: 3
-  T_max: 20
-
+tasks: ['t2']
+setting: 'classification'
 
 # model
 model:
@@ -18,6 +7,27 @@ model:
   hidden_size: 256
   num_layers: 2
   dropout: 0.3
-  output_size: 6
+  output_size: 5
 
+solver:
+  num_workers: 8
+  batch_size: 128
+  epochs: 100
+  lr: 0.01
+  es_patience: 40
+  device: 'cuda'
+  scheduler: 'plateau'
+  factor: 0.5
+  patience: 20
+  min_lr: 1e-5
+  losses: ['focal']
+  log_steps: 20
+  eval_steps: 20
+
+
+loss:
+
+  alpha: [0.96, 0.96, 0.96, 0.96, 0.7] # alpha for focal loss
+  reduction: 'mean'
+  gamma: 1.5
 

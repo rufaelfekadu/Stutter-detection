@@ -127,7 +127,7 @@ class SedNet(nn.Module):
             MLPBlock(512, 512),
             MLPBlock(512, 256),
             nn.Linear(256, 128),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(128, self.num_classes)
         )
 

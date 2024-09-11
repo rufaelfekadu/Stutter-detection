@@ -5,13 +5,14 @@ from .whisper_cnn import WhisperDetector
 from .sednet import SedNet
 import torch
 
-available_models = {
+model_registery = {
     'lstm': LSTMModel,
     'convlstm': ConvLSTM,
     'lstmext': LSTMExt,
     'whisperyoho': WhisperDetector,
     'sednet': SedNet,
 }
+
 class NoneScheduler:
     def __init__(self, lr):
         self.lr = lr
@@ -25,7 +26,7 @@ class NoneScheduler:
         return [self.lr]
 
 def build_model(cfg):
-    model = available_models[cfg.model.name](**cfg.model)
+    model = model_registery[cfg.model.name](**cfg.model)
 
     if cfg.solver.optimizer == 'adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg.solver.lr)

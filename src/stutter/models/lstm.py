@@ -11,15 +11,15 @@ class LSTMModel(nn.Module):
         # self.emb = nn.Linear(self.input_size, self.hidden_size)
         self.lstm = nn.LSTM(self.input_size, self.hidden_size, self.num_layers, batch_first=True, dropout=self.dropout)
         self.ln = nn.LayerNorm(self.hidden_size)
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.fc0 = nn.Linear(self.hidden_size, self.hidden_size)
+        self.fc0 = nn.Linear(self.hidden_size, 128)
+        self.fc3 = nn.Linear(128, self.hidden_size)
         self.fc1 = nn.Linear(self.hidden_size, 1)
         self.act = nn.GELU()
         self.fc2 = nn.Linear(self.hidden_size, self.output_size)
-
+        
     def forward(self, x: torch.Tensor, tasks=['t1', 't2']):
         # x->(batch_size, seq_len, input_size)
-        x = x.permute(0, 2, 1)
+        # x = x.permute(0, 2, 1)
         
         # normalize the input
         # x =  x - x.mean(dim=2, keepdim=True) /
@@ -30,17 +30,14 @@ class LSTMModel(nn.Module):
         # x = self.emb(x)
 
         out, _ = self.lstm(x, (h0, c0))
-        out = self.ln(out)
-        # out = self.pool(out.permute(0, 2, 1))
+        # out = self.ln(out)
+
         t1_out, t2_out = None, None
         out = self.act(self.fc0(out[:, -1, :]))
-        
-        # if 't1' in tasks:
-        #     t1_out = self.fc1(out[:, -1, :])
-        # if 't2' in tasks:
-        #     t2_out = self.fc2(out[:, -1, :])
+        out = self.act(self.fc3(out))
+
         if 't1' in tasks:
-            t1_out = self.fc1(out)
+            t1_out = torch.sigmoid(self.fc1(out)).squeeze(-1)
         if 't2' in tasks:
             t2_out = self.fc2(out)
 
@@ -56,7 +53,7 @@ if __name__ == "__main__":
         'dropout': 0.5
         }
     model = LSTMModel(**kwargs)
-    x = torch.rand(32, 40,216)
+    x = torch.rand(32, 1598, 40)
     t1_out, t2_out = model(x)
     print(t1_out.shape, t2_out.shape)
     print(model)

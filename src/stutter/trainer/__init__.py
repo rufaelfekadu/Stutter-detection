@@ -1,7 +1,12 @@
-from .trainer import *
+from .trainer import Trainer, MTLTrainer
 from .multimodal import MultiModalTrainer
+from .classification import ClassificationTrainer, Wave2vecTrainer
+from .sed import SedTrainer, SedTrainer2
+from .video import VivitForStutterTrainer
 
 trainer_registery = {
+    'classification': ClassificationTrainer,
+    'wave2vec': Wave2vecTrainer,
     'mtl': MTLTrainer,
     'yoho': SedTrainer,
     'sed': SedTrainer2,
@@ -9,6 +14,6 @@ trainer_registery = {
     'multimodal': MultiModalTrainer
 }
 
-def build_trainer(cfg, logger=None, metrics=['f1']):
-    trainer = trainer_registery[cfg.setting](cfg, logger, metrics)
+def build_trainer(cfg, logger=None):
+    trainer = trainer_registery[cfg.setting](cfg, logger=logger)
     return trainer

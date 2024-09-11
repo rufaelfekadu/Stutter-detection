@@ -15,7 +15,8 @@ _C.cache_dir = '/tmp/'
 _C.output = CN()
 _C.output.save_dir = 'outputs/'
 _C.output.log_dir = 'logs'
-_C.output.checkpoint_dir = 'checkpoints' 
+_C.output.checkpoint_dir = 'checkpoints'
+_C.output.logger_name = 'stutter-detection' 
 
 # dataset configs
 _C.data = CN()
@@ -38,7 +39,7 @@ _C.data.sr = 16000
 _C.data.n_frames = 3
 _C.data.annotation = 'secondary_event'
 _C.data.aggregate = True
-_C.data.annotator = "A3"
+_C.data.annotator = "A1"
 _C.data.split_strategy = "ds_5"
 
 
@@ -91,6 +92,8 @@ _C.solver.momentum = 0.9
 
 # early stopping
 _C.solver.es_patience = 5
+_C.solver.validate_on = 't2_loss'
+_C.solver.validate_mode = 'min'
 
 #  dataloader
 _C.solver.batch_size = 32
@@ -113,5 +116,8 @@ _C.solver.milestones = [50, 100, 150]
 # logging
 _C.solver.eval_steps = 10
 _C.solver.log_steps = 10
+
+# metrics
+_C.solver.metrics = ['f1']
 
 

@@ -27,7 +27,7 @@ np.random.seed(0)
 random.seed(0)
 
 # lock = threading.Lock()
-label_columns = ['SR','ISR','MUR','P','B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
+label_columns = ['SR','ISR','MUR','P','B', 'V', 'FG', 'HM', 'ME', 'T']
 
 def check_voiced(mini_frames, vad):
     voiced = [False]*len(mini_frames)
@@ -98,7 +98,7 @@ def get_frames_for_audio(args, file_name):
     label_map = LabelMap()
     label_df = pd.read_csv(args.label_csv)
     label_df = label_df[label_df['media_file'] == file_name]
-    label_df = label_df[label_df['annotator'] == 'A2']
+    # label_df = label_df[label_df['annotator'] == 'A2']
     if len(label_df) == 0:
         return
     
@@ -161,14 +161,15 @@ def get_frames_for_audio(args, file_name):
         #     out.release()
         
         split = label_df['split'].values[0]
-        # temp_df = label_df[
-        #     (label_df['start'] <= ((stop / sr) * 1000) - (label_df['stuttering_duration']*percentage)) & 
-        #     (label_df['end'] >= ((start / sr) * 1000) + (label_df['stuttering_duration']*percentage))
-        #     ]
-        # select the labels with iou > 0.5
-        temp_df = label_df.copy()
-        temp_df['iou'] = temp_df.apply(lambda row: compute_iou(row['start'], row['end'], (start/sr)*1000, (stop/sr)*1000), axis=1)
-        temp_df = temp_df[temp_df['iou'] > 0.1]
+        percentage = 0.0
+        temp_df = label_df[
+            (label_df['start'] <= ((stop / sr) * 1000) ) & 
+            (label_df['end'] >= ((start / sr) * 1000))
+            ]
+        # # select the labels with iou > 0.5
+        # temp_df = label_df.copy()
+        # temp_df['iou'] = temp_df.apply(lambda row: compute_iou(row['start'], row['end'], (start/sr)*1000, (stop/sr)*1000), axis=1)
+        # temp_df = temp_df[temp_df['iou'] > 0.1]
         num_labels.append(len(temp_df))
 
         if len(temp_df) == 0:
@@ -180,12 +181,12 @@ def get_frames_for_audio(args, file_name):
             temp_df['media_file'] = file_name
             temp_df['label'] = 'no_stutter'
             temp_df['split'] = split
-            temp_df['iou'] = 0
+            # temp_df['iou'] = 0
 
         temp_df['clip_id'] = i
         temp_df['clip_start'] = (start/sr) * 1000
         temp_df['clip_end'] = (stop/sr) * 1000
-        reord_cols = ['media_file', 'clip_id', 'clip_start', 'clip_end', 'annotator', 'start', 'end', 'label', 'split', 'iou'] + label_columns
+        reord_cols = ['media_file', 'clip_id', 'clip_start', 'clip_end', 'annotator', 'start', 'end', 'label', 'split'] + label_columns
         temp_df = temp_df[reord_cols]
         total_df = pd.concat([total_df, temp_df], ignore_index=True, axis=0)
 
@@ -201,15 +202,15 @@ def get_frames_for_audio(args, file_name):
         #             f.write(f"{' '.join(out)}\n")
         
         # if split == 'test':
-        # write refernce txt file
-        with open(os.path.join(label_path,'sed', f'{file_name}_{i}_ref.txt'), 'w') as f:
-            temp_df = temp_df.sort_values(by='start')
-            for _, row in temp_df.iterrows():
-                start_l = max(0, (row['start']/1000 - start/sr))
-                end_l = min(duration, (row['end']/1000 - start/sr))
-                str_core, _ = label_map.get_core(row['label'])
-                for c in str_core:
-                    f.write(f"{round(start_l,4)},{round(end_l,4)},{label_map.description[c]}\n")
+        # # write refernce txt file
+        # with open(os.path.join(label_path,'sed', f'{file_name}_{i}_ref.txt'), 'w') as f:
+        #     temp_df = temp_df.sort_values(by='start')
+        #     for _, row in temp_df.iterrows():
+        #         start_l = max(0, (row['start']/1000 - start/sr))
+        #         end_l = min(duration, (row['end']/1000 - start/sr))
+        #         str_core, _ = label_map.get_core(row['label'])
+        #         for c in str_core:
+        #             f.write(f"{round(start_l,4)},{round(end_l,4)},{label_map.description[c]}\n")
 
     result['total_df'] = total_df
     result['num_labels'] = num_labels
@@ -253,12 +254,12 @@ def create_clips_strided(args):
     any_df= grouped[label_columns[:-1]].any().astype(int).reset_index()
     any_df.to_csv(args.output_path + 'any_df.csv', index=False)
 
-    any_2_df = aggregate_labels(total_df[total_df['split'].isin(['train'])], 'media_file', 'clip_id', 'annotator', label_columns[:-1], num_annotators=2)
-    any_2_df['split'] = 'train'
-    any_2_test_df = aggregate_labels(total_df[total_df['split'].isin(['test'])], 'media_file', 'clip_id', 'annotator', label_columns[:-1], num_annotators=1, gold=True)
-    any_2_test_df['split'] = 'test'
-    any_2_df = pd.concat([any_2_df, any_2_test_df], ignore_index=True)
-    any_2_df.to_csv(args.output_path + 'any_2_df.csv', index=False)
+    # any_2_df = aggregate_labels(total_df[total_df['split'].isin(['train'])], 'media_file', 'clip_id', 'annotator', label_columns[:-1], num_annotators=2)
+    # any_2_df['split'] = 'train'
+    # any_2_test_df = aggregate_labels(total_df[total_df['split'].isin(['test'])], 'media_file', 'clip_id', 'annotator', label_columns[:-1], num_annotators=1, gold=True)
+    # any_2_test_df['split'] = 'test'
+    # any_2_df = pd.concat([any_2_df, any_2_test_df], ignore_index=True)
+    # any_2_df.to_csv(args.output_path + 'any_2_df.csv', index=False)
     # dump the results to a json file with indentation
     import json
     with open(args.output_path + 'meta_data.json', 'w') as f:
@@ -473,9 +474,9 @@ def create_clips_from_transcript(args):
 
 if __name__ == "__main__":
 
-    output_path = 'datasets/fluencybank/ds_30/reading/'
+    output_path = 'datasets/fluencybank/ds_temp/reading/'
     ds_path = 'datasets/fluencybank/wavs/reading/'
-    label_csv = 'datasets/fluencybank/our_annotations/reading/csv/total_label.csv'
+    label_csv = 'datasets/fluencybank/our_annotations/reading/csv/total_label_train.csv'
     clip_csv = 'datasets/fluencybank/our_annotations/reading/csv/transcripts.csv'
     anotator = 'A3'
     parser = argparse.ArgumentParser()
@@ -484,8 +485,8 @@ if __name__ == "__main__":
     parser.add_argument('--label_csv', type=str, default=label_csv)
     parser.add_argument('--clip_csv', type=str, default=clip_csv)
     parser.add_argument('--anotator', type=str, default=anotator)
-    parser.add_argument('--stride_duration', type=int, default=5)
-    parser.add_argument('--clip_length', type=int, default=30)
+    parser.add_argument('--stride_duration', type=int, default=2)
+    parser.add_argument('--clip_length', type=int, default=5)
     parser.add_argument('--method', type=str, default='constant_stride')
     args = parser.parse_args()
 

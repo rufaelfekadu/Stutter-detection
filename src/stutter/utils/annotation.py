@@ -5,7 +5,8 @@ import sys
 
 class LabelMap(object):
     def __init__(self):
-        self.labels = ['SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
+        self.labels = ['SR', 'ISR', 'MUR', 'P', 'B', 'V', 'FG', 'HM', 'ME', 'T']
+        # self.labels = ['SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
         self.labeltoidx = dict(zip(self.labels, range(len(self.labels))))
         self.idxtolabel = dict(zip(range(len(self.labels)), self.labels))
         self.description = {
@@ -21,7 +22,7 @@ class LabelMap(object):
             'ME': 'MovementOfExtremities',
             'T': 'Tension'}
         self.core = ['SR', 'ISR', 'MUR', 'P', 'B']
-        self.secondary = ['NV','V', 'FG', 'HM', 'ME']
+        self.secondary = ['V', 'FG', 'HM', 'ME']
         self.tension = ['T']
         self.sep28k_labels = ['Unsure', 'PoorAudioQuality', 'Prolongation', 'Block', 'SoundRep', 'WordRep', 'DifficultToUnderstand',
                               'Interjection', 'NoStutteredWords', 'NaturalPause', 'Music', 'NoSpeech']
@@ -136,13 +137,20 @@ class LabelMap(object):
     def get_secondary(self, label_array):
         if isinstance(label_array, str):
             label_array = self.labelfromstr(label_array)
-        return [self.idxtolabel[i] for i in range(len(label_array)) if label_array[i] == 1 and self.idxtolabel[i] in self.secondary]
+        return [self.idxtolabel[i] for i in range(len(label_array)) if label_array[i] == 1 and self.idxtolabel[i] in self.secondary], [label_array[self.labeltoidx[secondary]] for secondary in self.secondary]
     
     def get_tension(self, label_array):
         if isinstance(label_array, str):
             label_array = self.labelfromstr(label_array)
         return label_array[self.labeltoidx['T']]
     
+    def get_all(self, label_array):
+        # get everything except tension
+        if isinstance(label_array, str):
+            label_array = self.labelfromstr(label_array)
+     
+        return [self.labels[i] for i in range(len(label_array[:-1])) if label_array[i] == 1]
+
 def clean_element(element):
     # Replace None text with an empty string
     if element.text is None:

@@ -13,17 +13,15 @@ from sklearn.metrics import f1_score
 acc = load_metric("accuracy")
 f1 = load_metric("f1")
 
+from typing import Optional
+
 STUTTER_CLASSES = ['SR', 'ISR', 'MUR', 'P', 'B', 'V', 'FG', 'HM']
 
 def collate_fn(batch):
     max_len = max([len(x['input_values'][0]) for x in batch])
-    # breakpoint()
-    # pad the input values and attention masks
     for x in batch:
         x['input_values'] = F.pad(x['input_values'],(0, max_len - x['input_values'][0].shape[0]), "constant", 0)
         x['attention_mask'] = F.pad(x['attention_mask'],(0, max_len - x['attention_mask'][0].shape[0]), "constant", 0)
-    
-    # breakpoint()
     return {k: torch.stack([x[k] for x in batch]) for k in batch[0].keys()}
 
 class MultiModalTrainer(Trainer):

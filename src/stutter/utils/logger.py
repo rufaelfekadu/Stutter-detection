@@ -60,7 +60,7 @@ class CSVLogger(baselogger):
 class WandbLogger(baselogger):
     def __init__(self, cfg) -> None:
         super(WandbLogger, self).__init__()
-        wandb.init(project=cfg.name, config=cfg, dir=cfg.output.save_dir+'/logs', name=f'{cfg.model.name}_{cfg.data.name}_' + '_'.join(cfg.tasks))
+        wandb.init(project=cfg.name, config=cfg, dir=cfg.output.save_dir+'/logs', name=cfg.output.logger_name)
 
     def add_scalar(self, name, value, epoch):
         wandb.log({name: value})

@@ -1,18 +1,18 @@
 tasks: ['t1']
-setting: 'mtl'
+setting: 'classification'
 # model
 model:
   name: 'lstm'
   hidden_size: 64
   num_layers: 2
   dropout: 0.3
-  output_size: 6
+  output_size: 5
   input_size: 40
 
 solver:
   num_workers: 8
   batch_size: 128
-  epochs: 100
+  epochs: 200
   lr: 0.01
   es_patience: 40
   device: 'cuda'
@@ -24,20 +24,25 @@ solver:
   log_steps: 20
   eval_steps: 20
 
+  validate_on: 't1_loss'
+  validate_mode: 'min'
+
+  optimizer: 'sgd'
+
 loss:
   # weights: [0.96, 0.98, 0.95, 0.94, 0.8, 0.4] # weights for bce loss
-  weights: [1]
+  weights: [0.4]
   # weights: [7.29, 9.23, 27.94,3.96,2.268]
   # alpha: [0.87, 0.97, 0.97,0.80,0.74] # alpha for focal loss
-  # alpha: [0.96, 0.96, 0.96, 0.96, 0.7, 0.6] # alpha for focal loss
+  alpha: [0.95, 0.96, 0.99, 0.85, 0.89] # alpha for focal loss
   reduction: 'mean'
   gamma: 1.5
 
-data:
-  name: 'fluencybank'
-  annotation: "secondary_event"
-  aggregate: True
-  annotator: "A2"
-  split_strategy: "ds_5"
-  label_path: "datasets/fluencybank/ds_5/reading/total_df.csv"
-  root: "datasets/fluencybank/ds_5/reading/clips/audio/"
+# data:
+#   name: 'fluencybank'
+#   annotation: "secondary_event"
+#   aggregate: True
+#   annotator: "A2"
+#   split_strategy: "ds_5"
+#   label_path: "datasets/fluencybank/ds_5/reading/total_df.csv"
+#   root: "datasets/fluencybank/ds_5/reading/clips/audio/"

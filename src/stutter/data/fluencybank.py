@@ -51,7 +51,6 @@ class FluencyBankYOHO(Dataset):
         # assert len(self.audio_splits) == len(self.text_splits), f"Number of audio {len(self.audio_splits)} and text {len(self.text_splits)} splits do not match"
         self.transform = AutoFeatureExtractor.from_pretrained("openai/whisper-base", cache_dir="./outputs/")
         self.label_map = LabelMap()
-        breakpoint()
         with open(self.label_path, 'r') as f:
             split_data = json.load(f)
 
@@ -110,6 +109,9 @@ class FluencyBankSed(Dataset):
         print(f"Feature extractor: {self.encoder_name}")
         self.transform = AutoFeatureExtractor.from_pretrained(encoders[self.encoder_name], cache_dir=self.cache_dir, return_tensors="pt")
 
+        self.soft_labels = torch.zeros_like(self.label, dtype=torch.float32)
+        self.soft_labels = (torch.sum(self.label, dim=1, keepdim=True) > 0).float().squeeze(1)
+
         self.label_map = LabelMap()
         with open(self.split_file, 'r') as f:
             split_data = json.load(f)
@@ -131,6 +133,7 @@ class FluencyBankSed(Dataset):
         audio_file_path = f"{self.root}/{media_file}/{media_file}_{clip_id}.wav"
         wav,sr = sf.read(audio_file_path)
         audio_features = self.transform(wav,sampling_rate=sr)
+        
         return {
             'mel_spec': audio_features['input_values'][0],
             'label': self.label[idx],
@@ -142,7 +145,7 @@ class FluencyBankSed(Dataset):
     
 class FluencyBank(Dataset):
 
-    __acceptable_params = ['root', 'label_path', 'ckpt', 'name', 'n_mels', 'win_length', 'hop_length', 'n_fft']
+    __acceptable_params = ['root', 'label_path', 'annotator', 'split_file', 'ckpt', 'cache_dir', 'name', 'n_mels', 'win_length', 'hop_length', 'n_fft', 'sr']
 
     def __init__(self, transforms=None, save=True, **kwargs):
         [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
@@ -150,49 +153,52 @@ class FluencyBank(Dataset):
         self.length = 3
         self.transform = transforms
         self.scaler = ScaleTransform(MinMaxScaler())
+        self.label_map = LabelMap()
 
-        self.label_columns = ['Prolongation', 'Block', 'SoundRep', 'WordRep', 'Interjection', 'NoStutteredWords']
-        self.ckpt = f'{self.ckpt}/{self.name}.pt' if self.ckpt else f'{self.name}.pt'
+        self.cache_path = f'{self.cache_dir}/{self.name}_{self.annotator}.pt' if self.ckpt else f'{self.name}_{self.annotator}.pt'
 
-        if os.path.isfile(self.ckpt):
+        if os.path.isfile(self.cache_path):
             print("************ Loading Cached Dataset ************")
-            self.mel_spec, self.f0, self.label, self.split = torch.load(self.ckpt)
+            self.mel_spec, self.f0, self.label, self.split = torch.load(self.cache_path)
          
         else:
             print("************ Loading Dataset ************")
             self._load_data(**kwargs)
             if save:
-                torch.save((self.mel_spec, self.f0, self.label, self.split), self.ckpt)
+                torch.save((self.mel_spec, self.f0, self.label, self.split), self.cache_path)
                 # torch.save((self.data, self.label), self.ckpt)
-    
+
     def _load_data(self, **kwargs):
         
         data_path = self.root
         df = pd.read_csv(self.label_path)
-        df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['Show'], str(row['EpId']).rjust(3,'0'), f"{row['Show']}_{str(row['EpId']).rjust(3,'0')}_{row['ClipId']}.wav"), axis=1)
+        df['file_path'] = df.apply(lambda row: os.path.join(data_path, row['media_file'], f"{row['file_name']}.wav"), axis=1)
+
+        #  read the split file
+        with open(self.split_file, 'r') as f:
+            split_data = json.load(f)
+        df['split'] = df['media_file'].apply(lambda x: 0 if x in split_data['train'] else 1 if x in split_data['val'] else 2)
+        self.split = df['split'].values
         
-        if not 'split' in df.columns:
-            unique_clips = df['EpId'].unique()
-            df['split'] = df['EpId'].apply(lambda x: 'train' if x in unique_clips[:int(0.8*len(unique_clips))] else 'val' if x in unique_clips[int(0.8*len(unique_clips)):int(0.9*len(unique_clips))] else 'test')
-        
-        self.mel_specs, self.f0, failed = load_audio_files(df, **kwargs)
+        kwargs['n_frames'] = int(((df['end'] - df['start']).max()/1000)*self.sr)
+        mel_specs, self.f0, failed = load_audio_files(df, **kwargs)
+
         # remove failed files
         print(f"Failed to load {len(failed)} files")
         df = df.drop(failed).reset_index(drop=True)
-        self.mel_specs = np.stack([x for x in self.mel_specs if x is not None])
-        self.f0 = np.stack([x for x in self.f0 if x is not None])
+        mel_specs = np.stack([x for x in mel_specs if x is not None])
+        f0 = np.stack([x for x in self.f0 if x is not None])
                
         # scale the mel_specs
-        train_idx = df[df['split'] == 'train'].index
-        self.scaler.fit(self.mel_specs[train_idx])
-        self.mel_spec = self.scaler(self.mel_specs)
+        # train_idx = df[df['split'] == 'train'].index
+        # self.scaler.fit(self.mel_specs[train_idx])
+        # self.mel_spec = self.scaler(self.mel_specs)
 
-        df['split'] = df['split'].apply(lambda x: 0 if x == 'train' else 1 if x == 'val' else 2)
-        self.split = df['split'].values
+        # df['split'] = df['split'].apply(lambda x: 0 if x == 'train' else 1 if x == 'val' else 2)
         
-        self.label = torch.tensor(df[self.label_columns].values, dtype=torch.float32)
-        self.mel_spec = torch.tensor(self.mel_spec, dtype=torch.float32)
-        self.f0 = torch.tensor(self.f0, dtype=torch.float32)
+        self.label = torch.tensor(df[self.label_map.core].values, dtype=torch.float32)
+        self.mel_spec = torch.tensor(mel_specs, dtype=torch.float32)
+        self.f0 = torch.tensor(f0, dtype=torch.float32)
 
         del df
     
@@ -270,11 +276,13 @@ class FluencyBankSlow(Dataset):
 
 if __name__ == "__main__":
     kwargs = {
-        'root': 'datasets/fluencybank/ds_30/reading/clips/audio',
-        'label_path': 'datasets/fluencybank/ds_30/reading/sed_labels.pt',
+        'root': 'datasets/fluencybank/ds_label/reading/A1/clips/audio',
+        'label_path': 'datasets/fluencybank/ds_label/reading/A1/total_label.csv',
         'split_file': 'datasets/fluencybank/our_annotations/reading_split.json',
         'ckpt': 'outputs/fluencybank/',
+        'cache_dir': 'outputs/fluencybank/fluencybank.pt',
         'name': 'fluencybank',
+        'n_mfcc': 13,
         'n_mels': 40,
         'win_length': 400,
         'hop_length': 160,
@@ -285,6 +293,6 @@ if __name__ == "__main__":
     # for i in range(10):
     #     print(dataset[i]['mel_spec']['input_features'].shape, dataset[i]['label'])
 
-    dataset = FluencyBankSed(**kwargs)
+    dataset = FluencyBank(**kwargs)
     for i in range(10):
         print(dataset[i]['mel_spec'].shape, dataset[i]['label'])
