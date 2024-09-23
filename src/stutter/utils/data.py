@@ -16,7 +16,7 @@ from stutter.utils.annotation import LabelMap
 
 def _load_audio_file(row, **kwargs):
 
-    frames = kwargs.get('n_frames', 3000)
+    frames = kwargs.get('n_frames', 80000)
     n_mels = kwargs.get('n_mels', 40)
     n_mfcc = kwargs.get('n_mfcc', 13)
     hop_length = kwargs.get('hop_length', 160)
@@ -36,18 +36,19 @@ def _load_audio_file(row, **kwargs):
 
         # mel_spec = librosa.feature.melspectrogram(y=waveform, sr=sample_rate, n_mels=n_mels, hop_length=hop_length, win_length=win_length)
         # mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
-        mel_spec = logmelfilterbank(waveform, sample_rate, num_mels=n_mels, hop_size=hop_length, win_length=win_length)
+        # mel_spec = logmelfilterbank(waveform, sample_rate, num_mels=n_mels, hop_size=hop_length, win_length=win_length)
         # mfcc = librosa.feature.mfcc(waveform, n_mfcc=n_mfcc)
-        f0, voiced_flag, voiced_probs = librosa.pyin(waveform, 
-                                                     fmin=librosa.note_to_hz('C2'), 
-                                                     fmax=librosa.note_to_hz('C7'), 
-                                                     win_length=400, hop_length=160,
-                                                     pad_mode='constant',sr=sample_rate)
+        # f0, voiced_flag, voiced_probs = librosa.pyin(waveform, 
+        #                                              fmin=librosa.note_to_hz('C2'), 
+        #                                              fmax=librosa.note_to_hz('C7'), 
+        #                                              win_length=400, hop_length=160,
+        #                                              pad_mode='constant',sr=sample_rate)
         
-        f0 = np.nan_to_num(f0)  # Replace NaNs with zeros
-        f0_delta = librosa.feature.delta(f0)
+        # f0 = np.nan_to_num(f0)  # Replace NaNs with zeros
+        # f0_delta = librosa.feature.delta(f0)
 
-        return (row.name, mel_spec, np.vstack([f0, f0_delta, voiced_probs]))  
+        # return (row.name, mel_spec, np.vstack([f0, f0_delta, voiced_probs]))
+        return (row.name, waveform, None)  
 
     except Exception as e:
         print(f"Error loading file {audio_path}: {e}")
@@ -79,10 +80,10 @@ def logmelfilterbank(
     audio,
     sampling_rate,
     fft_size=1024,
-    hop_size=256,
-    win_length=None,
+    hop_size=160,
+    win_length=400,
     window="hann",
-    num_mels=80,
+    num_mels=40,
     fmin=80,
     fmax=7600,
     eps=1e-10,

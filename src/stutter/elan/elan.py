@@ -49,6 +49,7 @@ class EafGroup(pympi.Elan.Eaf):
         self.remove_tier('default')
     
     def initialize_from_files(self, elan_files, sep28k_annotations=None):
+
         '''
             Initialize the EafGroup from a list of elan files paths
             input:
@@ -74,21 +75,27 @@ class EafGroup(pympi.Elan.Eaf):
             if not par_tier in self.get_tier_names() and par_tier:
                 self.add_tier('PAR', tier_dict={'TIER_ID': 'PAR', 'LINGUISTIC_TYPE_REF': 'default-lt'})
                 for annotation in eaf.get_annotation_data_for_tier(par_tier):
-                    if annotation[0] is None:
-                        self.add_annotation('PAR', 0, annotation[1], annotation[2])
-                    else:
+                    try:
                         self.add_annotation('PAR', annotation[0], annotation[1], annotation[2])
+                    except:
+                        print(f'Invalid  PAR annotation {annotation[0], annotation[1]} in {elan_file}')
+                    # if annotation[0] is None:
+                    #     self.add_annotation('PAR', 0, annotation[1], annotation[2])
+                    # else:
+                    #     self.add_annotation('PAR', annotation[0], annotation[1], annotation[2])
 
             # add Interviewer tier from the first elan file
             if not inv_tier in self.get_tier_names() and inv_tier:
                 self.add_tier('INV', tier_dict={'TIER_ID': 'INV', 'LINGUISTIC_TYPE_REF': 'default-lt'})
                 for annotation in eaf.get_annotation_data_for_tier(inv_tier):
-                    start_time = annotation[0] if annotation[0] else 0
-                    end_time = annotation[1] if annotation[1] else 0
-                    if annotation[0] is None or annotation[1] is None:
-                        print(f'Invalid annotation {annotation} in {elan_file}')
-                    else:
-                        self.add_annotation('INV', start_time, end_time, annotation[2])
+                    try:
+                        self.add_annotation('INV', annotation[0], annotation[1], annotation[2])
+                    except:
+                        print(f'Invalid INV annotation {annotation} in {elan_file}')
+                    # if annotation[0] is None or annotation[1] is None:
+                    #     print(f'Invalid annotation {annotation} in {elan_file}')
+                    # else:
+                    #     self.add_annotation('INV', start_time, end_time, annotation[2])
 
             
             try:
@@ -296,12 +303,13 @@ class EafGroup(pympi.Elan.Eaf):
             annotations = self.get_annotation_data_for_tier(tier)
             temp_df['annotator'] = [tier]*len(annotations)
             temp_df = pd.concat([temp_df, pd.DataFrame(annotations, columns=['start', 'end', 'label'])], axis=1)
-            label = temp_df['label'].apply(lambda x: self.label_map.labelfromstr(x))
-            for i in range(len(self.label_map.labels)):
-                temp_df[self.label_map.labels[i]] = label.apply(lambda x: x[i])
+            if tier not in ['PAR','INV']:
+                label = temp_df['label'].apply(lambda x: self.label_map.labelfromstr(x, verbose=True))
+            # for i in range(len(self.label_map.labels)):
+            #     temp_df[self.label_map.labels[i]] = label.apply(lambda x: x[i])
             df = pd.concat([df, temp_df]).reset_index(drop=True)
         df['media_file'] = self.media_file
-        return df[['media_file', 'annotator', 'start', 'end', 'label']+ self.label_map.labels]
+        return df[['media_file', 'annotator', 'start', 'end', 'label']] #+ self.label_map.labels]
 
 class ELANGroup(object):
     

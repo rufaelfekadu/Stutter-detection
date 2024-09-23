@@ -23,13 +23,28 @@ class ClassificationTrainer(Trainer):
         self.test_labels = []
         self.test_fnames = []
         self.num_classes = 5
-        self.label_columns = LabelMap().core
+        self.label_columns = ['SR','ISR','MUR','P','B', 'V', 'FG', 'HM','T', 'any']
+        self.annotation = self.label_columns.index(cfg.data.annotation)
 
         super(ClassificationTrainer, self).__init__(cfg, **kwargs)
+        self.weights = {
+            'SR': [0.95],
+            'ISR': [0.8],
+            'MUR': [0.97],
+            'P': [0.8],
+            'B': [0.65],
+            'V': [0.8],
+            'FG': [0.6],
+            'HM': [0.8],
+            'any': [0.8],
+            'T': [0.3, 0.5, 0.3, 1.0],
+        }
+        self.criterion['t1'].weights = self.weights[cfg.data.annotation]
 
+    
     def parse_batch_train(self, batch):
-        x = batch['mel_spec']
-        y = batch['label']
+        x = batch['audio_features']
+        y = batch['label'][:,self.annotation]
         return x.to(self.device), y.to(self.device)
     
     def train_step(self, batch):
@@ -37,15 +52,10 @@ class ClassificationTrainer(Trainer):
         x, y = self.parse_batch_train(batch)
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss_1, loss_2 = torch.tensor(0), torch.tensor(0)
-
         if 't1' in self.tasks:
-            y_t1 = (torch.sum(y, dim=1)>0).float()
-            loss_1 = self.criterion['t1'](pred_t1, y_t1)
+            loss_1 = self.criterion['t1'](pred_t1.squeeze(), y)
         if 't2' in self.tasks:
             loss_2 = self.criterion['t2'](pred_t2, y)
-            self.train_preds_t2.append(torch.sigmoid(pred_t2).detach().cpu().numpy())
-        self.train_labels.append(y.detach().cpu().numpy())
-
         loss = loss_1 + loss_2
         loss.backward()
         self.optimizer.step()
@@ -60,81 +70,53 @@ class ClassificationTrainer(Trainer):
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
         loss_1, loss_2 = torch.tensor(0), torch.tensor(0)
         if 't1' in self.tasks:
-            y_t1 = (torch.sum(y, dim=1)>0).float()
-            loss_1 = self.criterion['t1'](pred_t1, y_t1)
+            loss_1 = self.criterion['t1'](pred_t1.squeeze(), y) 
+            metrics_1 = self.compute_metrics(pred_t1.squeeze(), y)
         if 't2' in self.tasks:
             loss_2 = self.criterion['t2'](pred_t2, y)
         return {
             't1_loss': loss_1.item(),
             't2_loss': loss_2.item(),
             'total_loss': loss_1.item() + loss_2.item(),
+            **metrics_1
         }
     
     def test_step(self, batch):
         x, y= self.parse_batch_train(batch)
         pred_t1, pred_t2 = self.model(x, tasks=self.tasks)
-        metrics_1, metrics_2 = {}, {}
+        # metrics_1, metrics_2 = {}, {}
         if 't1' in self.tasks:
-            y_t1 = (torch.sum(y, dim=1)>0).float()
-            metrics_1 = self.compute_metrics(pred_t1, y_t1)
-            self.test_preds_t1.append(pred_t1.detach().cpu().numpy())
+            metrics_1 = self.criterion['t1'](pred_t1.squeeze(), y)
+            self.test_preds_t1.append(torch.round(pred_t1.squeeze()).detach().cpu().numpy())
         if 't2' in self.tasks:
-            self.test_preds_t2.append(torch.sigmoid(pred_t2).detach().cpu().numpy())
             metrics_2 = self.compute_metrics(pred_t2, y)
 
         self.test_labels.append(y.detach().cpu().numpy())
 
         # merge the metrics
-        metrics = {**metrics_1, **metrics_2}
+        # metrics = {**metrics_1, **metrics_2}
 
-        return metrics
-
+        return {
+            'loss': metrics_1.item()
+        }
+    
     def after_test(self):
+        self.test_preds_t1 = np.concatenate(self.test_preds_t1)
+        self.test_labels = np.concatenate(self.test_labels)
+        fig = self.plot_confusion_matrix(self.test_labels, self.test_preds_t1, title='Confusion matrix')
+        self.logger.add_figure('Confusion matrix', fig)
 
-        self.test_preds_t1 = np.concatenate(self.test_preds_t1, axis=0)
-        # self.test_preds_t2 = np.concatenate(self.test_preds_t2, axis=0)
-        self.test_labels = np.concatenate(self.test_labels, axis=0)
-
-        # self.train_preds_t1 = np.concatenate(self.train_preds_t1, axis=0)
-        # # self.train_preds_t2 = np.concatenate(self.train_preds_t2, axis=0)
-        # self.train_labels = np.concatenate(self.train_labels, axis=0)        
-        
-        fig, ax = plt.subplots(2, 3, figsize=(15, 10))
-        # for i, label in enumerate(self.label_columns):
-        #     row = i // 3
-        #     col = i % 3
-            
-        #     cm = confusion_matrix(self.test_labels[:,i], (self.test_preds_t1[:,i]>0.5).astype(int))
-        #     disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot(ax=ax[row, col])
-        #     # remove the colorbar
-        #     disp.im_.colorbar.remove()
-        #     ax[row, col].set_title(f"{label}")
-
-        cm = confusion_matrix(np.sum(self.test_labels, axis=1)>0, self.test_preds_t1>0)
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot(ax=ax[1,2])
-        ax[1,2].set_title("Any")
-        plt.tight_layout()
-        try:
-            self.logger.add_figure("Confusion_matrix_test", fig)
-        except:
-            pass
-
-        # fig, ax = plt.subplots(2, 3, figsize=(15, 10))
-        # for i, label in enumerate(self.label_columns):
-        #     row = i // 3
-        #     col = i % 3
-            
-        #     cm = confusion_matrix(self.train_labels[:,i], (self.train_preds_t1[:,i]>0.5).astype(int))
-        #     disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot(ax=ax[row, col])
-        #     # remove the colorbar
-        #     disp.im_.colorbar.remove()
-        #     ax[row, col].set_title(f"{label}")
-        # plt.tight_layout()
-        # try:
-        #     self.logger.add_figure("Confusion_matrix_train", fig)
-        # except:
-        #     pass
-        
+    def plot_confusion_matrix(self, y_true, y_pred, normalize=False, title=None, cmap=plt.cm.Blues):
+        cm = confusion_matrix(y_true, y_pred)
+        if normalize:
+            cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+            title = title + ' normalized'
+        fig, ax = plt.subplots()
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot(cmap=cmap, ax=ax)
+        plt.title(title)
+        return fig
+    
 
 class Wave2vecTrainer(HuggingFaceTrainer):
 

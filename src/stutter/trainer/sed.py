@@ -1,6 +1,8 @@
 from .trainer import Trainer
 from stutter.utils.annotation import LabelMap
 from stutter.utils.data import deconstruct_labels
+from stutter.utils.misc import plot_sample
+from stutter.utils.metrics import compute_metrics
 import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -135,6 +137,7 @@ class SedTrainer2(Trainer):
             self.logger.add_figure(f'test/encoder_output_{i}', fig)
                 
 class SedTrainer(Trainer):
+    
     def __init__(self, cfg, logger=None, metrics=['acc']):
         super(SedTrainer, self).__init__(cfg, logger, metrics = metrics)
         self.criterion = self.criterion['t2']
@@ -144,19 +147,18 @@ class SedTrainer(Trainer):
         self.num_classes = 5
 
     def parse_batch_train(self, batch):
-        x = batch['mel_spec']
+        x = batch['audio']
         y = batch['label']
         return x.to(self.device), y.to(self.device)
     
     def parse_batch_test(self, batch):
-        x = batch['mel_spec']
+        x = batch['audio']
         y = batch['label']
-        fname = batch['file_path']
-        return x.to(self.device), y.to(self.device), fname
+        return x.to(self.device), y.to(self.device)
     
     def train_step(self, batch):
         x, y = self.parse_batch_train(batch)
-        pred = self.model(x.squeeze(1))
+        pred = self.model(x.unsqueeze(1))
         loss = self.criterion(pred, y)
         loss.backward()
         self.optimizer.step()
@@ -169,8 +171,10 @@ class SedTrainer(Trainer):
         x, y = self.parse_batch_train(batch)
         pred = self.model(x.squeeze(1))
         loss = self.criterion(pred, y)
+        metrics = compute_metrics(pred, y, self.num_classes)
         return{
-            't2': loss.item()
+            't2': loss.item(),
+            **metrics
         }
     
     def test(self, loader=None, name='test'):
@@ -182,11 +186,10 @@ class SedTrainer(Trainer):
 
         with torch.no_grad():
             for batch in loader:
-                x, y, fname = self.parse_batch_test(batch)
+                x, y = self.parse_batch_test(batch)
                 preds = self.model(x.squeeze(1))
                 test_loss = self.criterion(preds, y)
                 self.test_preds.append(preds)
-                self.test_fnames.append(fname)
                 self._update_meter(self.test_meters, f't2_test_loss', test_loss.item())
         
         self._write_meters(self.test_meters)

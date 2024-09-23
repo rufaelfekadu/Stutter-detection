@@ -62,27 +62,30 @@ def generate_non_overlapping_times(df, num_new_times, duration_dist=None):
     return new_label_df
 
 def get_frames_for_audio(args, file_name):
-    split = 'test' if args.annotator == 'Gold' else 'train'
+    # split = 'test' if args.annotator == 'Gold' else 'train'
     label_df = pd.read_csv(args.label_csv)
-
+    if args.annotator == 'Gold':
+        label_df = label_df[(label_df['split'] == 'test')&(label_df['annotator'] == 'Gold')]
+    else:
+        label_df = label_df[(label_df['split'].isin(['train', 'val'])) | ((label_df['annotator'] == 'Gold') & (label_df['split'] == 'test'))]
     label_df['duration'] = label_df['end'] - label_df['start']
     # fit a kernel density estimate to the duration distribution
     duration_dist = stats.gaussian_kde(label_df['duration'])
     label_df = label_df[label_df['media_file'] == file_name]
-    label_df = label_df[label_df['split'] == split]
+    # label_df = label_df[label_df['split'] == split]
 
 
     # get the maximum count per annotator from the dataframe 
-    max_count = label_df[label_df['annotator']==args.annotator].sum()[label_map.labels[:-1]].max()
+    max_count = label_df.sum()[label_map.labels[:-1]].max()
     print(f'Maximum count per annotator: {max_count} for {file_name}')
     new_label_df = generate_non_overlapping_times(label_df, max_count, duration_dist=duration_dist)
     new_label_df['annotator'] = args.annotator
-    new_label_df['split'] = split
+    new_label_df['split'] = label_df['split'].iloc[0]
     new_label_df['media_file'] = file_name
     
     label_df = pd.concat([label_df, new_label_df], ignore_index=True)
 
-    label_df = label_df[label_df['annotator'] == args.annotator]
+    # label_df = label_df[label_df['annotator'] == args.annotator]
     # durations = label_df['end'] - label_df['start']
     # sample duration from the distribution of durations
     # duration = np.random.choice(durations)
@@ -164,7 +167,7 @@ def create_clips_label(args):
         for ds_path in os.listdir(os.path.join(args.ds_path,'wavs')):
             futures.append(executor.submit(get_frames_for_audio, args, ds_path.split('.')[0]))
         
-        for future in futures:
+        for future in tqdm(futures):
             path, res = future.result()
             if res:
                 results[path] = res
@@ -185,10 +188,10 @@ def create_clips_label(args):
 
 if __name__ == "__main__":
 
-    output_path = 'datasets/fluencybank/ds_label/reading/sad/'
+    output_path = 'datasets/fluencybank/ds_label/reading/bau_3/'
     ds_path = 'datasets/fluencybank/wavs/reading/'
-    label_csv = 'datasets/fluencybank/our_annotations/reading/csv/total_label_train.csv'
-    anotator = 'sad'
+    label_csv = 'datasets/fluencybank/our_annotations/reading/csv/total_dataset.csv'
+    anotator = 'bau'
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_path', type=str, default=output_path)
     parser.add_argument('--ds_path', type=str, default=ds_path)

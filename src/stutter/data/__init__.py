@@ -1,20 +1,35 @@
 from .sep28 import Sep28K
-from .uclass import Uclass
-from .fluencybank import FluencyBank, FluencyBankSlow, FluencyBankYOHO, FluencyBankSed  
+from .fluencybank import FluencyBankWav2vec, SEDataset, ClassificationDataset 
+from .hf_data import HuggingFaceDataset
 from torchaudio.transforms import MelSpectrogram
 from sklearn.model_selection import train_test_split
 import torch
 import numpy as np
 import pandas as pd
+import torch.nn.functional as F
 
 available_datasets = {
-    'uclass': Uclass,
-    'fluencybank': FluencyBank,
+    'sed': SEDataset,
+    'classification': ClassificationDataset,
     'sep28k': Sep28K,
-    'fluencybankyoho': FluencyBankYOHO,
-    'fluencybanksed': FluencyBankSed,
-    'fluencybankslow': FluencyBankSlow
+    'hf': HuggingFaceDataset,
 }
+
+def collate_fn(batch):
+    # Find the maximum length of audio features in the batch
+    max_len = max(len(x['audio']) for x in batch)
+    
+    # Pad each audio feature array to the maximum length and convert to tensor
+    for x in batch:
+        x['audio_features'] = torch.tensor(
+            np.pad(x['audio'], (0, max_len - len(x['audio'])), mode='constant', constant_values=0),
+            dtype=torch.float32
+        )
+    
+    # Stack the tensors for each key in the batch
+    collated_batch = {k: torch.stack([x[k] for x in batch]) for k in batch[0].keys() if k != 'file_path'}
+    
+    return collated_batch
 
 def get_dataset(cfg):
     splits = ['train', 'val', 'test']
@@ -24,8 +39,7 @@ def get_dataset(cfg):
         idx = np.where(ds.split == splits.index(split))[0]
         print(f'{split} dataset size: {len(idx)}')
         datasets[split] = torch.utils.data.Subset(ds, idx)
-    # if not 'yoho'in cfg.data.name:
-    #     print_dataset_stats(datasets)
+    
     return datasets
 
 def print_dataset_stats(dataset):
@@ -41,9 +55,6 @@ def print_dataset_stats(dataset):
 def get_dataloaders(cfg):
     
     datasets = get_dataset(cfg)
-    #  get weights for loss function
-    # weights = [(np.unique((train_dataset.label>=2).float()[:,i], return_counts=True)[1]/len(train_dataset))[0] for i in range(train_dataset.label.shape[1])]
-    # print('******weights for the BCE loss****\n',weights)
 
     train_loader = torch.utils.data.DataLoader(
         datasets['train'],
@@ -51,14 +62,16 @@ def get_dataloaders(cfg):
         shuffle=True,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,
+        collate_fn=collate_fn
     )
 
     val_loader = torch.utils.data.DataLoader(
         datasets['val'],
-        batch_size=cfg.solver.batch_size,
+        batch_size=cfg.solver.batch_size+1,
         shuffle=False,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,
+        collate_fn=collate_fn
     )
 
     test_loader = torch.utils.data.DataLoader(
@@ -67,6 +80,7 @@ def get_dataloaders(cfg):
         shuffle=False,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,
+        collate_fn=collate_fn
     )
 
     return train_loader, val_loader, test_loader

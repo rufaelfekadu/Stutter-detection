@@ -1,0 +1,40 @@
+tasks: ['t1']
+setting: 'classification'
+# model
+model:
+  name: 'wav2vec'
+  hidden_size: 512
+  
+solver:
+  num_workers: 8
+  batch_size: 32
+  epochs: 200
+  lr: 0.001
+  es_patience: 40
+  device: 'cuda'
+  scheduler: 'plateau'
+  factor: 0.5
+  patience: 5
+  min_lr: 1e-5
+  losses: ['mae']
+  log_steps: 20
+  eval_steps: 20
+
+  validate_on: 't1_loss'
+  validate_mode: 'min'
+
+  optimizer: 'sgd'
+
+loss:
+  # weights: [0.96, 0.98, 0.95, 0.94, 0.8, 0.4] # weights for bce loss
+  weights: [0.4]
+  # weights: [7.29, 9.23, 27.94,3.96,2.268]
+  # alpha: [0.87, 0.97, 0.97,0.80,0.74] # alpha for focal loss
+  alpha: [0.95, 0.96, 0.99, 0.85, 0.89] # alpha for focal loss
+  reduction: 'mean'
+  gamma: 1.5
+
+# data:
+#   annotation: "P"
+#   annotator: "A2"
+#   split_strategy: "ds_5"

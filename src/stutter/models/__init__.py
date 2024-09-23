@@ -3,6 +3,7 @@ from .convlstm import ConvLSTM
 from .lstmext import LSTMExt
 from .whisper_cnn import WhisperDetector
 from .sednet import SedNet
+from .wav2vec import Wav2Vec2Classifier
 import torch
 
 model_registery = {
@@ -11,6 +12,7 @@ model_registery = {
     'lstmext': LSTMExt,
     'whisperyoho': WhisperDetector,
     'sednet': SedNet,
+    'wav2vec': Wav2Vec2Classifier
 }
 
 class NoneScheduler:

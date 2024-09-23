@@ -14,41 +14,6 @@ class CrossEntropyLoss(nn.Module):
         loss = F.cross_entropy(y_pred, y_true.long(), weight=torch.tensor(0.9).to(y_true.device))
         return loss
 
-class SedLoss(nn.Module):
-    __acceptable_params = ['weights', 'device', 'smoothing']
-    
-    def __init__(self, **kwargs):
-        super(SedLoss, self).__init__()
-        [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
-        self.weights = torch.tensor(self.weights)
-        self.smoothing = kwargs.get('smoothing', 0.1)  # Default smoothing value
-
-    def forward(self, y_pred, y_true):
-        # y_pred -> (batch_size, 1500, 5)
-        # y_true -> (batch_size, 1500, 5)
-        # self.weights -> (5,1)
-        
-        # Apply label smoothing
-        y_true_smoothed = y_true * (1 - self.smoothing) + self.smoothing * 0.5
-
-        # Repeat weights to match the shape of y_true
-        # weight = self.weights.repeat(y_true.shape[0], y_true.shape[1], 1).to(self.device)
-        weight = self.weights.to(y_true.device)
-
-        # Apply weights to the loss in the class dimension
-        loss = F.binary_cross_entropy_with_logits(y_pred, y_true_smoothed, weight=weight)
-        return loss
-
-class YOHOLoss(nn.Module):
-    def __init__(self, **kwargs):
-        super(YOHOLoss, self).__init__()
-    def forward(self, y_pred, y_true):
-        ind = torch.max(y_true[:,:,2:],axis=2)[0] 
-        y_pred[:,:,0:2]  = y_pred[:,:,0:2] * torch.repeat_interleave(ind[:,:,None], repeats=2, dim=2)
-        y_pred[:,:,2:]  = torch.sigmoid(y_pred[:,:,2:])
-        loss = F.mse_loss(y_pred, y_true)
-        return loss
-    
 class FocalLoss(nn.Module):
     __acceptable_params = ['alpha', 'gamma', 'reduction', 'device']
     def __init__(self, **kwargs):
@@ -98,7 +63,7 @@ class FocalLossMultiClass(nn.Module):
     def forward(self, inputs, targets):
         
         # Convert inputs to probabilities
-        # probs = F.sigmoid(inputs)
+        probs = F.sigmoid(inputs)
         # Calculate the cross entropy loss
         bce = F.binary_cross_entropy_with_logits(inputs, targets, reduction='none',pos_weight=self.weights.to(targets.device))
 
@@ -139,6 +104,22 @@ class CCCLoss(nn.Module):
 
         return ccc_loss
 
+class WeightedMAELoss(nn.Module):
+    __acceptable_params = ['weights']
+    def __init__(self, **kwargs):
+        super(WeightedMAELoss, self).__init__()
+        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
+        # self.class_weights = class_weights
+        self.weights =torch.tensor([0.5, 0.2, 0.5, 1.0], dtype=torch.float32)
+ 
+    def forward(self, outputs, targets):
+        loss = 0.0
+        for i in range(len(self.weights)):
+            weight = self.weights[i]
+            if (targets == i).sum() > 0:
+                loss += weight * torch.abs(outputs[targets == i] - targets[targets == i]).mean()
+        return loss
+    
 class BCELoss(nn.Module):
     __acceptable_params = ['weights', 'device']
     def __init__(self, **kwargs):
@@ -147,7 +128,7 @@ class BCELoss(nn.Module):
 
     def forward(self, y_pred, y_true):
         weights = torch.tensor([self.weights[0] if label==1 else 1-self.weights[0] for label in y_true]).to(self.device)
-        loss = F.binary_cross_entropy(y_pred, y_true, weight=weights)
+        loss = F.binary_cross_entropy_with_logits(y_pred, y_true, weight=weights)
         return loss
 
 class BCELossMulticlass(nn.Module):
@@ -169,14 +150,5 @@ class BCELossWithLogits(nn.BCEWithLogitsLoss):
     def forward(self, y_pred, y_true):
         return super().forward(y_pred, y_true)
     
-loss_registery = {
-    'ccc': CCCLoss,
-    'ce': CrossEntropyLoss,
-    'focal': FocalLoss,
-    'focal-m': FocalLossMultiClass,
-    'bce': BCELoss,
-    'bce-m': BCELossMulticlass,
-    'yoho': YOHOLoss,
-    'sed': SedLoss
-}
+
 

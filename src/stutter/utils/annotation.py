@@ -5,7 +5,7 @@ import sys
 
 class LabelMap(object):
     def __init__(self):
-        self.labels = ['SR', 'ISR', 'MUR', 'P', 'B', 'V', 'FG', 'HM', 'ME', 'T']
+        self.labels = ['SR', 'ISR', 'MUR', 'P', 'B', 'V', 'FG', 'HM', 'ME', 'T', 'NS']
         # self.labels = ['SR', 'ISR', 'MUR', 'P', 'B', 'NV', 'V', 'FG', 'HM', 'ME', 'T']
         self.labeltoidx = dict(zip(self.labels, range(len(self.labels))))
         self.idxtolabel = dict(zip(range(len(self.labels)), self.labels))
@@ -20,10 +20,12 @@ class LabelMap(object):
             'FG': 'FacialGrimaces',
             'HM': 'HeadMovement',
             'ME': 'MovementOfExtremities',
-            'T': 'Tension'}
+            'T': 'Tension',
+            'NS': 'NoStutteredWords'}
         self.core = ['SR', 'ISR', 'MUR', 'P', 'B']
         self.secondary = ['V', 'FG', 'HM', 'ME']
         self.tension = ['T']
+        self.fluent = ['NS']
         self.sep28k_labels = ['Unsure', 'PoorAudioQuality', 'Prolongation', 'Block', 'SoundRep', 'WordRep', 'DifficultToUnderstand',
                               'Interjection', 'NoStutteredWords', 'NaturalPause', 'Music', 'NoSpeech']
 
@@ -49,12 +51,8 @@ class LabelMap(object):
         label_original= label_str
         replacements = {
             '!':'1',
-            # ' ': '',
-            
             ':': ';',
             ',': ';',
-            # '\t': '',
-            # '\n': '',
             '.': ';',
             'O': '0',
             'RS': 'SR',
@@ -74,7 +72,11 @@ class LabelMap(object):
             'FV+G': 'FG+V',
             'V_0': 'V;0',
             '_': '',
+            ' ': '',
+            '\t': '',
+            '\n': '',
         }
+
         for key, value in replacements.items():
             label_str = label_str.replace(key, value)
 
@@ -99,6 +101,7 @@ class LabelMap(object):
             for b in behavior:
                 # b = b.lower()
                 try:
+                    b = b.strip(' ')
                     label_array[self.labeltoidx[b]] = 1
                 except KeyError:
                     if verbose:
@@ -149,7 +152,7 @@ class LabelMap(object):
         if isinstance(label_array, str):
             label_array = self.labelfromstr(label_array)
      
-        return [self.labels[i] for i in range(len(label_array[:-1])) if label_array[i] == 1]
+        return [self.labels[i] for i in range(len(label_array[:-2])) if label_array[i] == 1]
 
 def clean_element(element):
     # Replace None text with an empty string

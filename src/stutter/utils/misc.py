@@ -29,7 +29,7 @@ def setup_exp(cfg):
     cfg.output.log_dir = os.path.join(cfg.output.save_dir, cfg.output.log_dir)
     cfg.output.checkpoint_dir = os.path.join(cfg.output.save_dir, cfg.output.checkpoint_dir)
 
-    cfg.output.logger_name = f"{cfg.data.name}_{cfg.model.name}_{cfg.data.annotator}_"+'_'.join(cfg.tasks)
+    cfg.output.logger_name = f"{cfg.data.name}_{cfg.model.name}_{cfg.data.annotator}_{cfg.data.annotation}_"+'_'.join(cfg.tasks)
 
     if cfg.data.encoder_name != cfg.model.encoder_name:
         print(f"Warning: Encoder name in data config is different from model config. Using encoder name from model config.")

@@ -1,5 +1,18 @@
+from .loss import *
+from .sed_loss import *
 
-from .loss import loss_registery
+loss_registery = {
+    'ccc': CCCLoss,
+    'ce': CrossEntropyLoss,
+    'focal': FocalLoss,
+    'focal-m': FocalLossMultiClass,
+    'bce': BCELoss,
+    'bce-m': BCELossMulticlass,
+    'yoho': YOHOLoss,
+    'sed': SedLoss,
+    'mae': WeightedMAELoss,
+    'focal-ls': FocalLossWithLabelSmoothing,
+}
 
 def build_loss(cfg):
     criterion = {}

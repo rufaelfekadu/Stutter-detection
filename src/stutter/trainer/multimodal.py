@@ -24,6 +24,11 @@ def collate_fn(batch):
 
 class MultiModalTrainer(Trainer):
 
+    def __init__(self, cfg, logger=None, resume_from_checkpoint=False):
+        self.preds = []
+        self.label = []
+        super().__init__(cfg, logger, resume_from_checkpoint)
+
     def get_model(self):
         # TODO: Fix this function
         # vivitconfig = VivitConfig.from_pretrained("google/vivit-b-16x2-kinetics400")
@@ -41,8 +46,8 @@ class MultiModalTrainer(Trainer):
         # test_dataset = load_from_disk("outputs/fluencybank/dataset/stutter_hf/label_split/Gold_multimodal_test")
         # df = load_dataset(f'herwoww/{self.cfg.data.annotator}_multimodal_train')
         # test_dataset = load_dataset(f'herwoww/Gold_multimodal_train')
-        df = load_dataset(f"herwoww/{self.cfg.data.annotator}_multimodal_train", cache_dir="/tmp/")['train']
-        test_dataset=load_dataset("herwoww/Gold_multimodal_test", cache_dir="/tmp/")['train']
+        df = load_dataset(f"herwoww/{self.cfg.data.annotator}_multimodal_train", cache_dir="datasets/fluencybank/tmp")['train']
+        test_dataset=load_dataset("herwoww/Gold_multimodal_test", cache_dir="datasets/fluencybank/tmp")['train']
         
         if self.tasks[0] == 't1':
             if self.cfg.data.annotation != 'any':
@@ -152,13 +157,27 @@ class MultiModalTrainer(Trainer):
         if self.cfg.tasks[0] == 't1':
             metrics = self.compute_t1_metrics(logits.detach(), y.cpu())
             metrics['loss'] = loss.item()
+            self.preds.append(torch.round(logits.detach()).cpu().numpy())
+            self.label.append(y.cpu().numpy())
         else:
             metrics = self.compute_t2_metrics(logits.cpu(), y.cpu())
-            metrics['t1_loss'] = loss.item()
+            metrics['loss'] = loss.item()
         
         return {
             # 'loss': loss.item(),
             **metrics
         }
     
-    
+    def after_test(self):
+        preds = np.concatenate(self.preds, axis=0)
+        label = np.concatenate(self.label, axis=0)
+        import matplotlib.pyplot as plt
+        fig,ax = plt.subplots(1,1, figsize=(15,10))
+        # plot confusion matrix
+        cm = confusion_matrix(label, preds)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm).plot(ax=ax)
+        self.logger.add_figure("confusion_matrix", fig)
+
+
+
+
