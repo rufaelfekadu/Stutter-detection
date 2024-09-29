@@ -2,7 +2,7 @@ from .lstm import LSTMModel
 from .convlstm import ConvLSTM
 from .lstmext import LSTMExt
 from .whisper_cnn import WhisperDetector
-from .sednet import SedNet
+from .sednet import *
 from .wav2vec import Wav2Vec2Classifier
 import torch
 
@@ -12,6 +12,8 @@ model_registery = {
     'lstmext': LSTMExt,
     'whisperyoho': WhisperDetector,
     'sednet': SedNet,
+    'crnn': CRNN,
+    'yamnet': YAMNet,
     'wav2vec': Wav2Vec2Classifier
 }
 

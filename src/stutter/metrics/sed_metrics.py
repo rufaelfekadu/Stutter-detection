@@ -110,7 +110,7 @@ def event_based_f1_per_class(pred, truth, iou_threshold, num_classes):
     for c in range(num_classes):
         true_events = get_events(truth, c)
         pred_events = get_events(pred, c)
-
+        print(f'Class {c}: {len(true_events)} true events, {len(pred_events)} predicted events')
         tp, fp, fn = 0, 0, 0
         for true_event in true_events:
             matched = False
@@ -128,7 +128,8 @@ def event_based_f1_per_class(pred, truth, iou_threshold, num_classes):
 
         # Calculate F1 score
         if tp + fp + fn == 0:
-            f1_scores.append(1.0)  # Perfect score if no events are found at all
+            # f1_scores.append(1.0)  # Perfect score if no events are found at all
+            pass
         else:
             precision = tp / (tp + fp) if (tp + fp) > 0 else 0
             recall = tp / (tp + fn) if (tp + fn) > 0 else 0
@@ -182,14 +183,13 @@ def calculate_iou(event1, event2):
     return iou
 
 class SegmentBasedMetric(object):
-    def __init__(self, num_classes, segment_length=1.0, sample_rate=1, hop_length=1):
-        self.num_classes = num_classes
-        self.segment_length = segment_length
-        self.sample_rate = sample_rate
-        self.hop_length = hop_length
+    __acceptable_params = ['segment_length', 'sample_rate', 'hop_length']
+    def __init__(self, **kwargs):
+        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
 
     def __call__(self, predictions, targets):
-        segment_f1_scores = [[] for _ in range(self.num_classes)]
+        num_classes = targets.size(2)
+        segment_f1_scores = [[] for _ in range(num_classes)]
         predictions = (predictions > 0.5).int()
         targets = targets.int()
         for i in range(predictions.size(0)):  # Loop over batches
@@ -198,9 +198,9 @@ class SegmentBasedMetric(object):
 
             # Compute segment-based F1 scores per class
             segment_f1_per_class = segment_based_f1_per_class(
-                pred, truth, self.segment_length, self.num_classes, self.sample_rate, self.hop_length
+                pred, truth, self.segment_length, num_classes, self.sample_rate, self.hop_length
             )
-            for c in range(self.num_classes):
+            for c in range(num_classes):
                 segment_f1_scores[c].append(segment_f1_per_class[c])
 
         # Average F1 scores across the temporal dimension (batch)
@@ -208,12 +208,13 @@ class SegmentBasedMetric(object):
         return avg_segment_f1_per_class
 
 class EventBasedMetric(object):
-    def __init__(self, num_classes, event_iou_threshold=1):
-        self.num_classes = num_classes
-        self.event_iou_threshold = event_iou_threshold
+    __acceptable_params = ['event_iou_threshold']
+    def __init__(self, **kwargs):
+        [setattr(self, k, v) for k, v in kwargs.items() if k in self.__acceptable_params]
 
     def __call__(self, predictions, targets):
-        event_f1_scores = [[] for _ in range(self.num_classes)]
+        num_classes = targets.size(2)
+        event_f1_scores = [[] for _ in range(num_classes)]
         predictions = (predictions > 0.5).int()
         targets = targets.int()
         for i in range(predictions.size(0)):  # Loop over batches
@@ -221,9 +222,9 @@ class EventBasedMetric(object):
             truth = targets[i].cpu().numpy()  # (T, C)
 
             # Compute event-based F1 scores per class
-            event_f1_per_class = event_based_f1_per_class(pred, truth, self.event_iou_threshold, self.num_classes)
+            event_f1_per_class = event_based_f1_per_class(pred, truth, self.event_iou_threshold, num_classes)
 
-            for c in range(self.num_classes):
+            for c in range(num_classes):
                 event_f1_scores[c].append(event_f1_per_class[c])
 
         # Average F1 scores across the temporal dimension (batch)
@@ -242,15 +243,19 @@ if __name__ == "__main__":
         [[1, 0], [0, 1], [1, 0]]
     ])
 
-    num_classes = 2
-    segment_length = 1.0
-    event_iou_threshold = 0.5
+    kwargs = {
+        'num_classes': 2,
+        'segment_length': 1.0,
+        'event_iou_threshold': 0.5,
+        'sample_rate': 1,
+        'hop_length': 1
+    }
 
-    eb = EventBasedMetric(num_classes, event_iou_threshold)
+    eb = EventBasedMetric(**kwargs)
     event_f1_scores = eb(predictions, targets)
     print(event_f1_scores)
 
-    sb = SegmentBasedMetric(num_classes, segment_length)
+    sb = SegmentBasedMetric(**kwargs)
     segment_f1_scores = sb(predictions, targets)
     print(segment_f1_scores)
 

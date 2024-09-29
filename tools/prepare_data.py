@@ -52,7 +52,7 @@ def main(args):
         # reorder the columns 
         total_ann_df = total_ann_df[['media_file', 'annotator' , 'split', 'start', 'end', 'label']] #+list(total_ann_df.columns[5:-1])]
 
-    total_ann_df.to_csv(args.csv_save_path+'labels_1.csv', index=False)
+    total_ann_df.to_csv(args.csv_save_path+'labels_2.csv', index=False)
     total_trans_df = total_trans_df[['media_file', 'annotator', 'start', 'end', 'label']]
     total_trans_df.to_csv(args.csv_save_path+'transcripts.csv', index=False)
     
@@ -67,7 +67,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Merge elan files')
     parser.add_argument('--file_path', type=str, default=file_path, help='Path to elan files')
-    parser.add_argument('--combine', type=bool, default=False, help='Combine the elan files')
+    parser.add_argument('--combine', type=bool, default=True, help='Combine the elan files')
     parser.add_argument('--combined_save_path', type=str, default=combined_save_path, help='Path to save the combined elan files')
     parser.add_argument('--csv_save_path', type=str, default=csv_save_path, help='Path to save the combined elan files')
     parser.add_argument('--split_file', type=str, default=split_file, help='Path to split file')

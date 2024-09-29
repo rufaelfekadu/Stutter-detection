@@ -8,8 +8,8 @@ warnings.filterwarnings("ignore")
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a model')
-    parser.add_argument('--data_config', type=str, default='baseline/configs/data/fluencybank.yml')
-    parser.add_argument('--model_config', type=str, default='baseline/configs/model/lstm.yml')
+    parser.add_argument('--data_config', type=str, default='baseline/configs/data/sed.yml')
+    parser.add_argument('--model_config', type=str, default='baseline/configs/model/crnn.yml')
     parser.add_argument('--logger', action='store_true')
     parser.add_argument('--opts', nargs='*', default=[])
     args = parser.parse_args()

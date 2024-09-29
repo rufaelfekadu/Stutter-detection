@@ -107,14 +107,13 @@ def main(args):
     
     # for each media_file, calculate the IAA and sort the results
     results = {}
-    media_file = '26f'
-    df = grannodf[grannodf['origItemID'] == media_file]
+    # media_file = '26f'
+    # df = grannodf[grannodf['origItemID'] == media_file]
     # df['timevr'] = df.apply(lambda row: normalize_vector(row), axis=1)
-    result = compute_iaa(df, args)
-    breakpoint()
-    # for  media_file, df in tqdm(grannodf.groupby('origItemID')):
-    #     result = compute_iaa(df, args)
-    #     results[media_file] = result
+    # result = compute_iaa(df, args)
+    for  media_file, df in tqdm(grannodf.groupby('origItemID')):
+        result = compute_iaa(df, args)
+        results[media_file] = result
 
     # write the results to a file as json with indent=4
     with open(args.save_path, 'w') as f:
@@ -123,8 +122,8 @@ def main(args):
 
 
 if __name__ == '__main__':
-    grannodf_path = 'datasets/fluencybank/our_annotations/interview/csv/gran_data_temp_1.csv'
-    save_path = 'datasets/fluencybank/our_annotations/interview/csv/iaa.json'
+    grannodf_path = 'datasets/fluencybank/our_annotations/interview/csv/gran_data_temp_2.csv'
+    save_path = 'datasets/fluencybank/our_annotations/interview/csv/iaa_temp_2.json'
     item_col = 'newItemID'
     annotator_col = 'annotator'
     label_col = 'timevr'

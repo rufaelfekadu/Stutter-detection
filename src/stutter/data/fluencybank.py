@@ -16,7 +16,7 @@ import soundfile as sf
 import json
 
 class SEDataset(Dataset):
-    __acceptable_params = ['name', 'root', 'label_path', 'cache_dir', 'split_file', 'encoder_name', 'n_mels', 'win_length', 'hop_length', 'n_fft', 'sr', 'n_frames']
+    __acceptable_params = ['name', 'root', 'label_path', 'cache_dir', 'split_file', 'n_mels', 'win_length', 'hop_length', 'n_fft', 'sr', 'n_frames']
     
     def __init__(self, **kwargs):
         [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
@@ -39,9 +39,10 @@ class SEDataset(Dataset):
             split_data = json.load(f)
         self.split = np.zeros(len(self.data))
         for i, audio_file in enumerate(self.data.keys()):
-            if audio_file in split_data['train']:
+            file_name = audio_file.split('_')[0]
+            if file_name in split_data['train']:
                 self.split[i] = 0
-            elif audio_file in split_data['val']:
+            elif file_name in split_data['val']:
                 self.split[i] = 1
             else:
                 self.split[i] = 2
@@ -61,7 +62,7 @@ class SEDataset(Dataset):
     def prep_label(self):
         label_size = (self.n_frames*self.sr + self.win_length) // self.hop_length - 1
         # read all the text files in the label path
-        label_files = glob(f'{self.label_path}/*/sed/*.txt')
+        label_files = glob(f'{self.label_path}/*/*.txt')
         labels = {}
         for label_file in label_files:
             l = torch.zeros(label_size, len(self.class_names))
@@ -74,7 +75,7 @@ class SEDataset(Dataset):
                     end = int((t[1]*self.sr - self.win_length) // self.hop_length)
                     try:
                         label = self.class_names.index(t[2])
-                    except:
+                    except ValueError:
                         continue
                     l[start:end, label] = 1
             file_name = label_file.split('/')[-1].split('.')[0]
@@ -90,7 +91,8 @@ class SEDataset(Dataset):
         label = self.label[file_name]
         return {
             'audio': audio_features,
-            'label': label
+            'label': label,
+            'fname': file_name
         }
 
 class ClassificationDataset(Dataset):
@@ -99,7 +101,8 @@ class ClassificationDataset(Dataset):
     def __init__(self, **kwargs):
         [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
         self.label_map = LabelMap()
-        self.class_names = self.label_map.description
+        class_names = ['SR', 'ISR', 'MUR', 'P', 'B', 'V']
+        self.class_names = [self.label_map.description[i] for i in class_names]
 
         try:
             self.label, self.data = torch.load(self.cache_dir)
@@ -132,14 +135,14 @@ class ClassificationDataset(Dataset):
         data = {}
         for audio_file in audio_files:
             audio = np.load(audio_file)
-            mel_spec = torch.tensor(audio, dtype=torch.float32)
+            audio = torch.tensor(audio, dtype=torch.float32)
             file_name = audio_file.split('/')[-1].split('.')[0]
-            data[file_name] = mel_spec
+            data[file_name] = audio
         return data
     
     def prep_label(self):
         # read the label file
-        label_files = glob(f'{self.label_path}/*/sed/*.txt')
+        label_files = glob(f'{self.label_path}/*/*.txt')
         labels = {}
         for label_file in label_files:
             with open(label_file, 'r') as f:
@@ -147,7 +150,10 @@ class ClassificationDataset(Dataset):
                 temp = f.readlines()
                 temp = [x.strip().split(',') for x in temp]
                 for t in temp:
-                    label = self.class_names.index(t[2])
+                    try:
+                        label = self.class_names.index(t[2])
+                    except:
+                        continue
                     l[label] = 1
                 file_name = label_file.split('/')[-1].split('.')[0]
                 labels[file_name] = l
@@ -157,21 +163,22 @@ class ClassificationDataset(Dataset):
         return len(self.data)
     
     def __getitem__(self, idx):
-        file_name = list(self.data.keys())[idx]
+        file_name = self.file_names[idx]
         audio_features = self.data[file_name]
         label = self.label[file_name]
         return {
             'audio': audio_features,
-            'label': label
+            'label': label,
+            'fname': file_name
         }
 
 if __name__ == "__main__":
     kwargs = {
         'root': 'datasets/fluencybank/ds_15/interview/clips/feature',
-        'label_path': 'datasets/fluencybank/ds_15/interview/label',
+        'label_path': 'datasets/fluencybank/ds_15/interview/label/sed',
         'split_file': 'datasets/fluencybank/our_annotations/interview_split.json',
         'annotator': 'A1',
-        'cache_dir': 'outputs/fluencybank/fluencybank.pt',
+        'cache_dir': 'outputs/fluencybank/fluencybank_sed.pt',
         'name': 'fluencybank',
         'n_mfcc': 13,
         'n_mels': 40,
@@ -182,4 +189,4 @@ if __name__ == "__main__":
     }
     dataset = SEDataset(**kwargs)
     for i in range(10):
-        print(dataset[i]['audio'].shape, dataset[i]['label'])
+        print(dataset[i]['audio'].shape, dataset[i]['label'], dataset[i]['fname'])

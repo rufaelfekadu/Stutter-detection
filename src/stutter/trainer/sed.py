@@ -2,7 +2,6 @@ from .trainer import Trainer
 from stutter.utils.annotation import LabelMap
 from stutter.utils.data import deconstruct_labels
 from stutter.utils.misc import plot_sample
-from stutter.utils.metrics import compute_metrics
 import torch
 import matplotlib.pyplot as plt
 from tqdm import tqdm
@@ -138,13 +137,12 @@ class SedTrainer2(Trainer):
                 
 class SedTrainer(Trainer):
     
-    def __init__(self, cfg, logger=None, metrics=['acc']):
-        super(SedTrainer, self).__init__(cfg, logger, metrics = metrics)
-        self.criterion = self.criterion['t2']
+    def __init__(self, cfg, logger=None):
+        # self.criterion = self.criterion['t2']
         self.test_preds = []
         self.test_labels = []
         self.test_fnames = []
-        self.num_classes = 5
+        super(SedTrainer, self).__init__(cfg, logger)
 
     def parse_batch_train(self, batch):
         x = batch['audio']
@@ -155,11 +153,19 @@ class SedTrainer(Trainer):
         x = batch['audio']
         y = batch['label']
         return x.to(self.device), y.to(self.device)
+
     
     def train_step(self, batch):
+
         x, y = self.parse_batch_train(batch)
-        pred = self.model(x.unsqueeze(1))
-        loss = self.criterion(pred, y)
+        pred_t1, pred_t2 = self.model(x, self.tasks)
+        loss_t1, loss_t2 = torch.tensor(0), torch.tensor(0)
+        if 't1' in self.tasks:
+            loss_t1 = self.criterion['t1'](pred_t1, y)
+        if 't2' in self.tasks:
+            loss_t2 = self.criterion['t2'](pred_t2, y)
+
+        loss = loss_t1 + loss_t2
         loss.backward()
         self.optimizer.step()
 
@@ -169,46 +175,45 @@ class SedTrainer(Trainer):
     
     def val_step(self, batch):
         x, y = self.parse_batch_train(batch)
-        pred = self.model(x.squeeze(1))
-        loss = self.criterion(pred, y)
-        metrics = compute_metrics(pred, y, self.num_classes)
+        pred_t1, pred_t2 = self.model(x, self.tasks)
+        loss_t1, loss_t2 = torch.tensor(0), torch.tensor(0)
+
+        if 't1' in self.tasks:
+            loss_t1 = self.criterion['t1'](pred_t1, y)
+        if 't2' in self.tasks:
+            loss_t2 = self.criterion['t2'](pred_t2, y)
+
+        # loss = loss_t1 + loss_t2 
+        # metrics = self.compute_metrics(pred_t2, y)
         return{
-            't2': loss.item(),
-            **metrics
+            't2_loss': loss_t2.item(),
+            # **metrics
         }
     
-    def test(self, loader=None, name='test'):
-        # generate the reference txt_files
-        loader = loader or self.test_loader
-        self.stage = 'test'
-        self.model.eval()
-        self._reset_meters(self.test_meters)
-
-        with torch.no_grad():
-            for batch in loader:
-                x, y = self.parse_batch_test(batch)
-                preds = self.model(x.squeeze(1))
-                test_loss = self.criterion(preds, y)
-                self.test_preds.append(preds)
-                self._update_meter(self.test_meters, f't2_test_loss', test_loss.item())
+    def test_step(self, batch):
+        x, y = self.parse_batch_test(batch)
+        pred_t1, pred_t2 = self.model(x, self.tasks)
+        loss_t1, loss_t2 = torch.tensor(0), torch.tensor(0)
+        if 't1' in self.tasks:
+            loss_t1 = self.criterion['t1'](pred_t1, y)
+        if 't2' in self.tasks:
+            loss_t2 = self.criterion['t2'](pred_t2, y)
+            self.test_preds.append(pred_t2.detach().cpu())
+            self.test_labels.append(y)
         
-        self._write_meters(self.test_meters)
-        self.after_test()
-
+        return{
+            't2': loss_t2.item(),
+            # **self.compute_metrics(pred_t2, y)
+        }
+    
     def after_test(self):
-        label_map = LabelMap()
         preds = torch.concat(self.test_preds, axis=0) # (N, 22, 2+num_classes)
-        fnames = self.test_fnames[0]
-        preds[:,:,2:] = (torch.sigmoid(preds[:,:,2:]) >= 0.5).int()
-        # write the predictions to a file
-        for i,fname in enumerate(fnames):
-            pred_fname = fname.replace('.txt', '_pred.txt')
-            pred = preds[i,:,:]
-            with open(pred_fname, 'w') as f:
-                for j in range(pred.size(0)):
-                    for k, l in enumerate(pred[j,2:]):
-                        if l == 1 and pred[j,1] > 0:
-                            start_l = pred[j,0].item()
-                            end_l = pred[j,1].item()
-                            f.write(f'{round(start_l,2)},{round(end_l,2)},{label_map.description[label_map.core[k]]}\n')
-             
+        label = torch.concat(self.test_labels, axis=0)
+        preds_mask = (preds >= 0.5).int()
+        # plot samples
+        to_plot_idx = torch.randint(0, preds.size(0), (20,))
+        print(self.compute_metrics(preds[to_plot_idx], label[to_plot_idx])) 
+        for i in to_plot_idx:
+            idx = torch.randint(0, preds.size(0), (1,))
+            plot_sample(preds[idx].T, preds_mask[idx].T, label[idx].T, title=['Logits','Predictions', 'Ground Truth'], cmap='inferno', aspect='auto', save_path=f'outputs/sample_{idx}.png')
+        

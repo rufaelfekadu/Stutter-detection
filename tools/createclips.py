@@ -113,7 +113,7 @@ def get_frames_for_audio(args, file_name):
         # if start, stop does not fall within any clip_df, skip
         if not any((start <= clip_df['start']*sr/1000) & (stop >= clip_df['end']*sr/1000)):
             # print(f'Skipping {file_name}_{i}: clip not Participant speech')
-            print(num_labels)
+            # print(num_labels)
             continue
 
         duration = (stop - start)/sr
@@ -215,8 +215,8 @@ def main(args):
     with ThreadPoolExecutor() as executor:
         futures = []
         for wav_path in os.listdir(args.ds_path):
-            if wav_path.split('.')[0] in split_file['train'] or wav_path.split('.')[0] in split_file['val']:
-                futures.append(executor.submit(get_frames_for_audio, args, wav_path.split('.')[0]))
+            # if wav_path.split('.')[0] in split_file['train'] or wav_path.split('.')[0] in split_file['val']:
+            futures.append(executor.submit(get_frames_for_audio, args, wav_path.split('.')[0]))
         
         # Optionally, wait for all futures to complete
         for future in tqdm(futures):

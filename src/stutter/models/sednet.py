@@ -212,7 +212,7 @@ class YAMNet(nn.Module):
         return out1, out2
 
 class CRNN(nn.Module):
-    __acceptable_params = ['output_size', 'rnn_hidden_size', 'rnn_layers']
+    __acceptable_params = ['output_size', 'hidden_size', 'num_layers']
     def __init__(self, **kwargs):
         super(CRNN, self).__init__()
         [setattr(self, k, kwargs.get(k, None)) for k in self.__acceptable_params]
@@ -238,15 +238,15 @@ class CRNN(nn.Module):
         # GRU recurrent layer to capture temporal dependencies
         self.rnn = nn.LSTM(
             input_size=2*128,   # Input size matches the output channels of the CNN
-            hidden_size=self.rnn_hidden_size,
-            num_layers=self.rnn_layers,
+            hidden_size=self.hidden_size,
+            num_layers=self.num_layers,
             batch_first=True,
             bidirectional=True
         )
 
         # Final classifier layer to output class scores
-        self.fc2 = nn.Linear(2*self.rnn_hidden_size , self.output_size)  # *2 because bidirectional
-        self.fc1 = nn.Linear(2*self.rnn_hidden_size, 1)  # 
+        self.fc2 = nn.Linear(2*self.hidden_size , self.output_size)  # *2 because bidirectional
+        self.fc1 = nn.Linear(2*self.hidden_size, 1)  # 
 
     def forward(self, x, tasks=['t1', 't2']):
         x = x.unsqueeze(1)
@@ -274,12 +274,12 @@ class CRNN(nn.Module):
 if __name__ == "__main__":
     kwargs = {
         'name': 'sednet',
-        'output_size': 5,
+        'output_size': 6,
         'emb_dim': 768,
         'encoder_name': 'wav2vec2-b',
         'cache_dir': './outputs',
-        'rnn_hidden_size': 32,
-        'rnn_layers': 2
+        'hidden_size': 32,
+        'num_layers': 2
     }
     model = CRNN(**kwargs)
     example_input = torch.randn(5, 1501,40)  # Example input: batch size 1, 1 channel, 801x64

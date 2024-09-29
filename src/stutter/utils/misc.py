@@ -59,7 +59,7 @@ def get_eaf_files(path, ext='.eaf'):
                     elanfiles[file].append(os.path.join(root, file))
     return elanfiles
 
-def plot_sample(*samples, title=None, figsize=(20, 10), save_path=None, **kwargs):
+def plot_sample(*samples, title=None, figsize=(20, 2), save_path=None, **kwargs):
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots(len(samples), 1, figsize=figsize)
 
@@ -75,8 +75,8 @@ def plot_sample(*samples, title=None, figsize=(20, 10), save_path=None, **kwargs
         a.set_xticks([])
         a.set_yticks([])
 
-    cbar = fig.colorbar(ax[0].images[0], ax=ax, orientation='vertical', fraction=0.02, pad=0.04)
-    cbar.ax.tick_params(labelsize=8)
+    # cbar = fig.colorbar(ax[0].images[0], ax=ax, orientation='vertical', fraction=0.02, pad=0.04)
+    # cbar.ax.tick_params(labelsize=8)
 
     plt.tight_layout()
     if save_path:

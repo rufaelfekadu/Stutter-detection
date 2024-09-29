@@ -1,0 +1,43 @@
+
+tasks: ['t2']
+setting: 'sed'
+# model
+model:
+  name: 'yamnet'
+  emb_dim: 768
+  hidden_size: 32
+  num_layers: 2
+  dropout: 0.3
+  output_size: 6
+  input_size: 40
+  
+
+solver:
+  num_workers: 8
+  batch_size: 32
+  epochs: 1
+  lr: 0.001
+  es_patience: 30
+  device: 'cuda'
+  scheduler: 'plateau'
+  factor: 0.5
+  patience: 10
+  min_lr: 1e-5
+  losses: ['focal-ls']
+  log_steps: 20
+  eval_steps: 20
+  metrics: ['event_based', 'segment_based']
+
+loss:
+  weights: [7.29, 9.23, 27.94, 3.96, 2.268] # weights for bce loss
+  alpha: [0.5]
+  gamma: 2.0
+
+metrics:
+  event_iou_threshold: 0.5
+  segment_length: 1.0
+  sample_rate: 16000
+  hop_length: 160
+
+# data
+

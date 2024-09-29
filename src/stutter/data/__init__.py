@@ -1,5 +1,5 @@
 from .sep28 import Sep28K
-from .fluencybank import FluencyBankWav2vec, SEDataset, ClassificationDataset 
+from .fluencybank import SEDataset, ClassificationDataset 
 from .hf_data import HuggingFaceDataset
 from torchaudio.transforms import MelSpectrogram
 from sklearn.model_selection import train_test_split
@@ -62,7 +62,6 @@ def get_dataloaders(cfg):
         shuffle=True,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,
-        collate_fn=collate_fn
     )
 
     val_loader = torch.utils.data.DataLoader(
@@ -71,7 +70,6 @@ def get_dataloaders(cfg):
         shuffle=False,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,
-        collate_fn=collate_fn
     )
 
     test_loader = torch.utils.data.DataLoader(
@@ -80,7 +78,6 @@ def get_dataloaders(cfg):
         shuffle=False,
         num_workers=cfg.solver.num_workers,
         pin_memory=True,
-        collate_fn=collate_fn
     )
 
     return train_loader, val_loader, test_loader
@@ -90,21 +87,28 @@ if __name__ == "__main__":
     from stutter.utils.misc import setup_exp
     from stutter.config import cfg
     
-    cfg.data.name = 'fluencybankyoho'
-    cfg.data.root = 'datasets/fluencybank/ds_sentence/reading/A3'
-    cfg.data.label_path = 'datasets/fluencybank/new_annotations/reading_split.json'
-    cfg.output_dir = 'outputs/fluencybank'
+    cfg.data.name = 'sed'
+    cfg.data.root = 'datasets/fluencybank/ds_15/interview/clips/feature'
+    cfg.data.split_file = 'datasets/fluencybank/our_annotations/interview_split.json'
+    cfg.data.label_path = 'datasets/fluencybank/ds_15/interview/label/sed'
+    cfg.data.cache_dir = 'datasets/fluencybank/ds_15/interview/fluencynak.pt'
+    cfg.data.win_length = 400
+    cfg.data.n_mfcc = 13
+    cfg.data.n_mels = 40
+    cfg.data.hop_length = 160
+    cfg.data.n_frames = 15
 
-    setup_exp(cfg)
 
+
+    # setup_exp(cfg)
     train_loader, val_loader, test_loader = get_dataloaders(cfg)
     for batch in train_loader:
-        print(batch['mel_spec'].shape, batch['label'].shape)
+        print(batch['audio'].shape, batch['label'].shape)
         break
     for batch in val_loader:
-        print(batch['mel_spec'].shape, batch['label'].shape)
+        print(batch['audio'].shape, batch['label'].shape)
         break
     for batch in test_loader:
-        print(batch['mel_spec'].shape, batch['label'].shape)
+        print(batch['audio'].shape, batch['label'].shape)
         break
     print('done')

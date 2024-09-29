@@ -197,13 +197,12 @@ class EafGroup(pympi.Elan.Eaf):
                 if not safe or l[1] > l[0]:
                     labels = [self.label_map.labelfromstr(l[2][i])[:6] for i in range(len(l[2]))]
                     dist = np.array([self.calc_dist(a,b) for a in labels for b in labels])>dist_threshold 
-                    if  np.count_nonzero(dist==0)<=(len(dist)//2) and len(labels)>1:
+                    if  np.count_nonzero(dist==0)<=(len(dist)//2) or len(labels)==1:
                         self.add_annotation('disagreement', l[0], l[1], sep.join(l[2]))
-                    else:
+                    elif np.count_nonzero(dist==0)>(len(dist)//2) and len(labels)>1:
                         labels = [self.label_map.labelfromstr(l[2][i])for i in range(len(l[2]))]
                         labels = select_majority_values(labels)
                         self.add_annotation('agreement', l[0], l[1], self.label_map.strfromlabel(labels))
-                        # disagreement_count += 1
                 l = [begin, end, [value]]
             else:
                 if end > l[1]:

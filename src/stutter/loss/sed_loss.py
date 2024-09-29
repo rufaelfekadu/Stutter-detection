@@ -40,7 +40,7 @@ class FocalLossWithLabelSmoothing(nn.Module):
         
         # Compute the modulating factor (focal factor)
         pt = torch.where(targets == 1, inputs, 1 - inputs)  # Probability of the correct class
-        focal_weight = self.alpha * (1 - pt) ** self.gamma  # Focal weight
+        focal_weight = self.alpha[0] * (1 - pt) ** self.gamma  # Focal weight
         
         # Apply focal factor to the BCE loss
         loss = focal_weight * bce_loss
@@ -81,3 +81,15 @@ class YOHOLoss(nn.Module):
         y_pred[:,:,2:]  = torch.sigmoid(y_pred[:,:,2:])
         loss = F.mse_loss(y_pred, y_true)
         return loss
+
+if __name__ == "__main__":
+    y_pred = torch.rand(32, 1500, 6)
+    y_true = torch.rand(32, 1500, 6)
+    kwargs = {
+        'alpha': 0.5,
+        'gamma': 2,
+        'smoothing': 0.1
+    }
+    focal_loss = FocalLossWithLabelSmoothing(**kwargs)
+    loss = focal_loss(y_pred, y_true)
+    print(loss)

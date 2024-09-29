@@ -9,7 +9,7 @@ trainer_registery = {
     'wave2vec': Wave2vecTrainer,
     'mtl': MTLTrainer,
     'yoho': SedTrainer,
-    'sed': SedTrainer2,
+    'sed': SedTrainer,
     'vivit': VivitForStutterTrainer,
     'multimodal': MultiModalTrainer
 }

@@ -78,6 +78,12 @@ _C.loss.alpha = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
 _C.loss.reduction = 'mean'
 _C.loss.weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
+_C.metrics = CN()
+_C.metrics.segment_length = 1.0
+_C.metrics.hop_length = 160
+_C.metrics.threshold = 0.5
+_C.metrics.event_iou_threshold = 0.5
+_C.metrics.sample_rate = 16000
 
 # training configs
 _C.solver = CN()

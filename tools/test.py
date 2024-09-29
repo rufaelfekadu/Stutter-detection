@@ -1,35 +1,11 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+import json
 
 # Your JSON data
-data = {
-    "24ma": {"alpha": 0.5398311711116152, "ks": 0.896551724137931, "sigma": 0.896551724137931},
-    "26f": {"alpha": 0.6418684166782878, "ks": 1.0, "sigma": 1.0},
-    "26m": {"alpha": 0.5794330491053219, "ks": 0.9512195121951219, "sigma": 0.975609756097561},
-    "28m": {"alpha": 0.5279665841701726, "ks": 0.9, "sigma": 0.9},
-    "29mb": {"alpha": 0.5456130518094204, "ks": 0.9258010118043845, "sigma": 0.9291736930860034},
-    "29mc": {"alpha": 0.6324251962579424, "ks": 0.9622641509433962, "sigma": 0.9639794168096055},
-    "32m": {"alpha": 0.6791198011323758, "ks": 0.9651162790697675, "sigma": 0.9767441860465116},
-    "34m": {"alpha": 0.34664713264836045, "ks": 0.7633802816901408, "sigma": 0.7774647887323943},
-    "35ma": {"alpha": 0.320573228858021, "ks": 0.7285171102661597, "sigma": 0.7361216730038023},
-    "35mb": {"alpha": 0.5210018681048858, "ks": 0.9256756756756757, "sigma": 0.9358108108108109},
-    "37m": {"alpha": 0.6675832037265474, "ks": 0.9269311064718163, "sigma": 0.9290187891440501},
-    "39f": {"alpha": 0.4418200072930891, "ks": 0.8453038674033149, "sigma": 0.861878453038674},
-    "43m": {"alpha": 0.5563448112274816, "ks": 0.9372384937238494, "sigma": 0.9393305439330544},
-    "44m": {"alpha": 0.47703239438334333, "ks": 0.9565217391304348, "sigma": 0.9565217391304348},
-    "46ma": {"alpha": 0.4979038332621467, "ks": 0.9428571428571428, "sigma": 0.9714285714285714},
-    "508": {"alpha": 0.5739377866846309, "ks": 1.0, "sigma": 1.0},
-    "509": {"alpha": 0.5649770864819035, "ks": 0.9615384615384616, "sigma": 0.9871794871794872},
-    "54f": {"alpha": 0.6922301795776502, "ks": 0.9778325123152709, "sigma": 0.9802955665024631},
-    "54m": {"alpha": 0.5647797182113377, "ks": 0.9669117647058824, "sigma": 0.9705882352941176},
-    "57m": {"alpha": 0.6921141917382112, "ks": 0.9751243781094527, "sigma": 0.9751243781094527},
-    "60m": {"alpha": 0.5849484437409098, "ks": 0.9518072289156626, "sigma": 0.9518072289156626},
-    "62f": {"alpha": 0.40187765650579355, "ks": 0.7725321888412017, "sigma": 0.7811158798283262},
-    "62m": {"alpha": 0.47075213406620187, "ks": 0.8714285714285714, "sigma": 0.8857142857142857},
-    "64m": {"alpha": 0.5352477966703864, "ks": 0.9403973509933775, "sigma": 0.9470198675496688},
-    "68m": {"alpha": 0.6056467707719879, "ks": 0.9572192513368984, "sigma": 0.9625668449197861}
-}
+with open('datasets/fluencybank/our_annotations/interview/csv/iaa_temp_2.json') as f:
+    data = json.load(f)
 
 # Convert the JSON data to a DataFrame
 df = pd.DataFrame(data).T.reset_index()
@@ -46,3 +22,15 @@ plt.ylabel('Value')
 plt.tight_layout()
 
 plt.savefig('comparison.png')
+
+df = pd.read_csv('datasets/fluencybank/our_annotations/interview/csv/labels_2.csv')
+df.sort_values('media_file', inplace=True)
+fig, ax = plt.subplots(figsize=(15, 8))
+for i, (media_file, group) in enumerate(df.groupby('annotator')):
+    sns.histplot(group['media_file'], ax=ax, label=media_file)
+plt.legend(title='Annotator')
+plt.xticks(rotation=90)
+plt.title('Distribution of counts of annotations')
+plt.savefig('distribution.png')
+
+# solution to leetcode proble 123

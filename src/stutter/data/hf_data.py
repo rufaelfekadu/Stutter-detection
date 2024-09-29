@@ -36,7 +36,6 @@ class HuggingFaceDataset():
         #     shuffled_dataset = shuffled_dataset.train_test_split(test_size=0.1)
         return shuffled_dataset
 
-
 class HuggingFaceDataset(Dataset):
     __acceptable_params = ['label_path', 'encoder_name', 'cache_dir', 'split_file', 'ckpt']
     def __init__(self, **kwargs):
@@ -51,7 +50,7 @@ class HuggingFaceDataset(Dataset):
         except Exception as e:
             print(f"Failed to load dataset '{self.cache_dir}' from the Hub: {e}")
             # Call the prep_data function and build the dataset from the returned dictionary
-            self.processor = AutoProcessor.from_pretrained(self.encoder_name, cache_dir=self.cache_dir)
+            self.audio_processor = AutoProcessor.from_pretrained(self.encoder_name, cache_dir=self.cache_dir)
             data_dict = self.prep_data()
             super().__init__(data=data_dict)  
             self.push_to_hub(self.ckpt)
@@ -73,7 +72,7 @@ class HuggingFaceDataset(Dataset):
         data_dict = {'audio': [], 'labels': []}
         for audio_file in audio_files:
             audio, sr = sf.read(audio_file)
-            audio = self.processor(audio, sr)['input_values'][0]
+            audio = self.audio_processor(audio, sr)['input_values'][0]
             data_dict['audio'].append(audio)
             label_file = audio_file.replace('.wav', '.txt').replace('clips', 'label').replace('audio', 'sed')
             data_dict['labels'].append(self.prep_label(label_file))

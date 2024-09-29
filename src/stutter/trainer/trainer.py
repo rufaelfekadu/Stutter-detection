@@ -7,7 +7,7 @@ from stutter.models import build_model
 from stutter.utils import AverageMeter, metric_registery, make_video_dataframe, extract_mfcc
 
 from stutter.loss import build_loss
-
+from stutter.metrics import build_metrics
 from torch.utils.data import DataLoader
 from datasets import  Dataset
 
@@ -81,7 +81,7 @@ class Trainer(BaseTrainer):
         self.validate_mode = cfg.solver.validate_mode # ['min', 'max']
         self.comparator = lambda curr, best: curr < best if self.validate_mode == 'min' else curr > best
 
-        self.metrics = cfg.solver.metrics
+        self.metrics = build_metrics(cfg)
 
         self.train_loader, self.val_loader, self.test_loader = self.get_dataloaders()
 
@@ -262,7 +262,7 @@ class Trainer(BaseTrainer):
     def compute_metrics(self, pred, y):
         vals = {}
         for metric in self.metrics:
-            vals[metric] = metric_registery[metric](pred, y)
+            vals[metric] = self.metrics[metric](pred, y)
         return vals
     
     def parse_batch_train(self, batch):

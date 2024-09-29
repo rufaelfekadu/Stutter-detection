@@ -1,0 +1,13 @@
+data: 
+  name: 'sed'
+  root: 'datasets/fluencybank/ds_15/interview/clips/feature'
+  label_path: datasets/fluencybank/ds_15/interview/label/sed
+  split_file: datasets/fluencybank/our_annotations/interview_split.json
+  cache_dir: 'datasets/fluencybank/ds_15/interview/feature_cache.pt'
+  annotator: 'A1'
+  win_length: 400
+  hop_length: 160
+  sr: 16000
+  n_fft: 512
+  n_mels: 40
+  n_frames: 15

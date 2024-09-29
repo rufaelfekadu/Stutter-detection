@@ -1,4 +1,4 @@
-from .loss import *
+from .classification_loss import *
 from .sed_loss import *
 
 loss_registery = {
