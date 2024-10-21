@@ -151,8 +151,7 @@ class LabelMap(object):
         # get everything except tension
         if isinstance(label_array, str):
             label_array = self.labelfromstr(label_array)
-     
-        return [self.labels[i] for i in range(len(label_array[:-2])) if label_array[i] == 1]
+        return [self.labels[i] for i in range(9) if label_array[i] == 1]
 
 def clean_element(element):
     # Replace None text with an empty string

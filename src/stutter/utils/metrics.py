@@ -1,12 +1,12 @@
 import torch
 import numpy as np
-from datasets import load_metric
+# from datasets import load_metric
 from sklearn.metrics import f1_score, roc_curve, multilabel_confusion_matrix
 import torcheval.metrics.functional as F
 
 
-acc = load_metric("accuracy")
-f1 = load_metric("f1")
+# acc = load_metric("accuracy")
+# f1 = load_metric("f1")
 
 
 

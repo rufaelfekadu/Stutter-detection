@@ -64,19 +64,25 @@ def generate_non_overlapping_times(df, num_new_times, duration_dist=None):
 def get_frames_for_audio(args, file_name):
     # split = 'test' if args.annotator == 'Gold' else 'train'
     label_df = pd.read_csv(args.label_csv)
-    if args.annotator == 'Gold':
-        label_df = label_df[(label_df['split'] == 'test')&(label_df['annotator'] == 'Gold')]
-    else:
-        label_df = label_df[(label_df['split'].isin(['train', 'val'])) | ((label_df['annotator'] == 'Gold') & (label_df['split'] == 'test'))]
+    label_df.dropna(subset=['label'], inplace=True)
+    # read split file
+    with open(args.split_file, 'r') as f:
+        split_data = json.load(f)
+    
+    label_df['split'] = label_df['media_file'].apply(lambda x: 'train' if x in split_data['train'] else 'val' if x in split_data['val'] else 'test')
+    label_df = label_df[label_df['annotator'].isin(['Gold', args.annotator])]
+    label_df = label_df[~((label_df['media_file'].isin(split_data['test'])) & (label_df['annotator'] != 'Gold'))]
+    
     label_df['duration'] = label_df['end'] - label_df['start']
     # fit a kernel density estimate to the duration distribution
     duration_dist = stats.gaussian_kde(label_df['duration'])
     label_df = label_df[label_df['media_file'] == file_name]
     # label_df = label_df[label_df['split'] == split]
 
-
+    label_df[label_map.labels] = label_df['label'].apply(lambda x: pd.Series(label_map.labelfromstr(x)))
+    
     # get the maximum count per annotator from the dataframe 
-    max_count = label_df.sum()[label_map.labels[:-1]].max()
+    max_count = label_df.sum()[label_map.labels[:-2]].max()
     print(f'Maximum count per annotator: {max_count} for {file_name}')
     new_label_df = generate_non_overlapping_times(label_df, max_count, duration_dist=duration_dist)
     new_label_df['annotator'] = args.annotator
@@ -105,7 +111,7 @@ def get_frames_for_audio(args, file_name):
     os.makedirs(audio_clip_dir, exist_ok=True)
     os.makedirs(video_clip_dir, exist_ok=True)
 
-    audio_path = os.path.join(args.ds_path, 'wavs', f'{file_name}.wav')
+    audio_path = os.path.join(args.ds_path, f'{file_name}.wav')
     audio, sr = librosa.load(audio_path, sr=16000)
     assert sr == 16000, 'Sample rate should be 16000'
 
@@ -163,8 +169,7 @@ def create_clips_label(args):
     results = {}
     with ThreadPoolExecutor() as executor:
         futures = []
-        print(os.listdir(os.path.join(args.ds_path,'wavs')))
-        for ds_path in os.listdir(os.path.join(args.ds_path,'wavs')):
+        for ds_path in os.listdir(os.path.join(args.ds_path)):
             futures.append(executor.submit(get_frames_for_audio, args, ds_path.split('.')[0]))
         
         for future in tqdm(futures):
@@ -183,21 +188,23 @@ def create_clips_label(args):
     total_df[label_map.labels] = total_df['label'].apply(lambda x: pd.Series(label_map.labelfromstr(x)))      
     total_df.to_csv(os.path.join(args.output_path, 'total_label.csv'), index=False)
 
-    with open(os.path.join(args.output_path, 'results.json'), 'w') as f:
-        json.dump(results, f)
+    # with open(os.path.join(args.output_path, 'results.json'), 'w') as f:
+    #     json.dump(results, f)
 
 if __name__ == "__main__":
 
-    output_path = 'datasets/fluencybank/ds_label/reading/bau_3/'
-    ds_path = 'datasets/fluencybank/wavs/reading/'
-    label_csv = 'datasets/fluencybank/our_annotations/reading/csv/total_dataset.csv'
-    anotator = 'bau'
+    output_path = 'datasets/stutter-bank/reading/A1/'
+    ds_path = 'datasets/fluencybank/wavs_resampled_16000/reading/'
+    label_csv = 'datasets/stutter-bank/reading/csv/total_dataset.csv'
+    anotator = 'A1'
+    split_file = 'datasets/stutter-bank/reading_split.json'
     parser = argparse.ArgumentParser()
     parser.add_argument('--output_path', type=str, default=output_path)
     parser.add_argument('--ds_path', type=str, default=ds_path)
     parser.add_argument('--label_csv', type=str, default=label_csv)
+    parser.add_argument('--split_file', type=str, default=split_file)
     parser.add_argument('--annotator', type=str, default=anotator)
-    parser.add_argument('--min_clip_length', type=int, default=0.03)
+    parser.add_argument('--min_clip_length', type=int, default=0.02)
     args = parser.parse_args()
 
     create_clips_label(args)

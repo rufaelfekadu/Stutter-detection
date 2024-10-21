@@ -1,44 +1,76 @@
 
 import sys
-sys.path.append('../annotationmodeling')
-from agreement import InterAnnotatorAgreement
-
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import euclidean_distances
 from collections import defaultdict
 import numpy as np
 import pandas as pd
 import copy
-
+from scipy.spatial.distance import pdist, squareform
+from tqdm import tqdm
 
 class Vector(object):
 
-    def __init__(self, start, end):
-        self.start = start
-        self.end = end
-        self.centroid = (start + end) / 2
-        
+    def __init__(self, se, sep=','):
+        if isinstance(se, str):
+            self.__init_from_str__(se, sep)
+        else:
+            start, end = se
+            self.start = start
+            self.end = end
+            self.centroid = (start + end) / 2
+
+    def __init_from_str__(self, s, sep=','):
+        s = s.strip('()')
+        start, end = s.split(sep)
+        self.start = int(start)
+        self.end = int(end)
+        self.centroid = (self.start + self.end) / 2
+
     def __sub__(self, other):
-        return Vector(self.end, other.start)
+        return Vector((self.end, other.start))
     
+    def normlaize(self, ref):
+        new_start = self.start - ref.start
+        new_end = new_start+(self.end-self.start)
+        if new_end<0 or new_start<0:
+            raise ValueError('Normalization failed')
+        return Vector((new_start, new_end))
+    
+    def __gt__(self, other):
+        if isinstance(other, Vector):
+            return self.start > other.start
+        return NotImplemented
+    
+    def __lt__(self, other):
+        if isinstance(other, Vector):
+            return self.start < other.start
+        return NotImplemented
+        
     def intersects(self, other):
         # check if two vectors intersect
-        return self.start <= other.end and other.start <= self.end
+        return self.start < other.end and other.start < self.end
     
+    def merge(self, other):
+        return Vector((min(self.start, other.start), max(self.end, other.end)))
+        
     def __len__(self):
-        return self.end - self.start
+        return int(self.end - self.start)
     
     def __str__(self):
         return f'({self.start}, {self.end})'
     
+    def __repr__(self) -> str:
+        return self.__str__() 
+    
 def unionize_vectorrange_sequence(vectorranges):
     min_s = min([vr.start for vr in vectorranges])
     max_e = max([vr.end for vr in vectorranges])
-    return Vector(min_s, max_e)
+    return Vector((min_s, max_e))
 
 def fragment_by_overlaps(annodf, uid_colname, item_colname, label_colname, decomp_fn, dist_fn=None, gold_df=None):
     resultdfs = []
-    for item_id in annodf[item_colname].unique():
+    for item_id in tqdm(annodf[item_colname].unique(), total=len(annodf[item_colname].unique())):
         idf = annodf[annodf[item_colname] == item_id]
         vectorranges = [vas[0] for vas in idf[label_colname]]
 
@@ -69,6 +101,7 @@ def fragment_by_overlaps(annodf, uid_colname, item_colname, label_colname, decom
                         goldlabel.append(gold_label)
                     else:
                         goldtimevr.append(None)
+                        goldlabel.append(None)
         resultdfs.append(pd.DataFrame({"origItemID":origItemID, "newItemID":newItemID, "newItemVR":newItemVR, uid_colname:uid, label_colname:label, "goldTimeVR":goldtimevr, "gold":goldlabel}))
     return pd.concat(resultdfs)
 
@@ -84,9 +117,12 @@ def decomp_fn(vectorranges, use_centroids=False, dist_fn=None):
         clustering.fit(centroids)
     else:
         dists = np.array([[1 - iou(a, b) for a in vectorranges] for b in vectorranges])
-        # mean_dist = np.std(dists)
+        # condensed_dists = squareform(pdist(dists, metric='euclidean'))
+        mean_dist = 1e-4
         clustering = AgglomerativeClustering(n_clusters=None,
-                                             distance_threshold=1000,
+                                             distance_threshold=mean_dist,
+                                            #  affinity="precomputed",
+                                            metric="precomputed",
                                              linkage="average")
         clustering.fit(dists)
         
@@ -99,6 +135,40 @@ def decomp_fn(vectorranges, use_centroids=False, dist_fn=None):
         uv = unionize_vectorrange_sequence(np.array(vectorranges)[np.array(indices)])
         result.append(uv)
     return result
+
+def merge_intervals(group):
+    # Extract unique newItemVRs
+    unique_intervals = sorted(group['newItemVR'].unique(), key=lambda v: v.start)
+    
+    merged_intervals = []
+    current_merge = unique_intervals[0]
+
+    for i in range(1, len(unique_intervals)):
+        next_vector = unique_intervals[i]
+        
+        # Check for intersection
+        if current_merge.intersects(next_vector):
+            # Merge the intervals
+            current_merge = current_merge.merge(next_vector)
+        else:
+            # Add the completed merge
+            merged_intervals.append(current_merge)
+            # Start a new merge with the next vector
+            current_merge = next_vector
+    
+    # Append the last merge
+    merged_intervals.append(current_merge)
+
+    # Create a mapping of original to merged intervals
+    interval_map = {}
+    for merged_vector in merged_intervals:
+        for original_vector in unique_intervals:
+            if merged_vector.intersects(original_vector):
+                interval_map[original_vector] = merged_vector
+    
+    # Update the group's newItemVR based on merged intervals
+    group['newItemVR'] = group['newItemVR'].map(lambda v: interval_map[v])
+    return group
 
 #  define Distance functions
 def iou(a:Vector, b: Vector):

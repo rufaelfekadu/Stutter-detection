@@ -119,7 +119,10 @@ def main(argv):
     event_labels = all_data.unique_event_labels
 
     segment_based_metrics = sed_eval.sound_event.SegmentBasedMetrics(event_labels)
-    event_based_metrics = sed_eval.sound_event.EventBasedMetrics(event_labels)
+    event_based_metrics = sed_eval.sound_event.EventBasedMetrics(event_labels,
+                                                                #  t_collar=0.2,
+                                                                #  evaluate_offset=False
+                                                                 )
 
     for file_pair in data:
         segment_based_metrics.evaluate(

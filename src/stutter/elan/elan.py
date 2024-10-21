@@ -78,7 +78,8 @@ class EafGroup(pympi.Elan.Eaf):
                     try:
                         self.add_annotation('PAR', annotation[0], annotation[1], annotation[2])
                     except:
-                        print(f'Invalid  PAR annotation {annotation[0], annotation[1]} in {elan_file}')
+                        # print(f'Invalid  PAR annotation {annotation[0], annotation[1]} in {elan_file}')
+                        continue
                     # if annotation[0] is None:
                     #     self.add_annotation('PAR', 0, annotation[1], annotation[2])
                     # else:
@@ -91,7 +92,8 @@ class EafGroup(pympi.Elan.Eaf):
                     try:
                         self.add_annotation('INV', annotation[0], annotation[1], annotation[2])
                     except:
-                        print(f'Invalid INV annotation {annotation} in {elan_file}')
+                        # print(f'Invalid INV annotation {annotation} in {elan_file}')
+                        continue
                     # if annotation[0] is None or annotation[1] is None:
                     #     print(f'Invalid annotation {annotation} in {elan_file}')
                     # else:
